@@ -11,7 +11,7 @@
 
 ```
 tinyCode/
-├── cmd/agent/main.go                  # CLI 入口：REPL 交互，装配 Agent
+├── cmd/tinycode/main.go               # CLI 入口：REPL 交互，装配 Agent
 ├── internal/
 │   ├── agent/
 │   │   ├── types.go                   # Message / Content / ToolCall / CompletionRequest 等
@@ -162,7 +162,7 @@ func (s *ShellTool) Execute(ctx context.Context, raw json.RawMessage) (string, e
 
 黑名单（`blacklist.go`）保留 one_loop.md 5.7 的清单，并针对 Windows 补充：`Remove-Item -Recurse -Force`、`Format-Volume`、`Stop-Computer`、`Restart-Computer`。
 
-## 5. CLI 入口（`cmd/agent/main.go`）
+## 5. CLI 入口（`cmd/tinycode/main.go`）
 
 - 读取环境变量：`OPENAI_API_KEY`、`OPENAI_BASE_URL`（默认 `https://api.openai.com/v1`）、`OPENAI_MODEL`（默认 `gpt-4o-mini`）
 - 工作目录取 `os.Getwd()` 传给 Shell 工具
@@ -185,7 +185,7 @@ func (s *ShellTool) Execute(ctx context.Context, raw json.RawMessage) (string, e
 
 - 仅使用 Go 标准库（`net/http`、`encoding/json`、`os/exec`、`context`、`bufio`），不引入第三方依赖
 - `go.mod` 模块名定为 `tinycode`，Go 版本与当前工具链一致
-- 提供最简运行指令：`go run ./cmd/agent`
+- 提供最简运行指令：`go run ./cmd/tinycode`
 
 ## 8. 验证方式
 

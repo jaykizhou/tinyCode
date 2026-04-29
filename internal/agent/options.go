@@ -39,3 +39,13 @@ func WithMaxIterations(n int) Option {
 func WithLogger(fn func(event string, kv ...any)) Option {
 	return func(a *Agent) { a.log = fn }
 }
+
+// WithEventSink 注入结构化事件订阅者，用于 TUI / 监控等需要感知主循环内部状态的场景。
+// 与 WithLogger 并行存在：logger 产出人类可读日志，sink 产出结构化事件。
+func WithEventSink(s EventSink) Option {
+	return func(a *Agent) {
+		if s != nil {
+			a.sink = s
+		}
+	}
+}

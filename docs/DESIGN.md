@@ -42,7 +42,6 @@ for i < maxIterations:
 
 ```
 tinyCode/
-├── cmd/agent/main.go              CLI 入口：读配置 + 装配 + REPL
 ├── internal/
 │   ├── agent/                     Agent 核心（Harness）
 │   │   ├── types.go               中性消息模型：Message / ToolCall / ...
@@ -63,7 +62,7 @@ tinyCode/
 
 ```mermaid
 graph TB
-    CLI[cmd/agent main]
+    CLI[cmd/tinycode main]
     A[agent.Agent]
     M[agent.Model]
     R[agent.Registry]
@@ -94,7 +93,7 @@ graph TB
 ```mermaid
 sequenceDiagram
     actor User
-    participant CLI as cmd/agent
+    participant CLI as cmd/tinycode
     participant A as Agent
     participant M as OpenAI Client
     participant R as Registry
@@ -148,7 +147,7 @@ type Model interface {
 
 1. 新建 `internal/model/<provider>/client.go`；
 2. 实现 `Name()` 与 `Complete()`；
-3. 在 `cmd/agent/main.go` 中替换 `openai.NewClient(...)` 为新 Client 即可。
+3. 在 `cmd/tinycode/main.go` 中替换 `openai.NewClient(...)` 为新 Client 即可。
 
 ### 4.2 Tool
 
@@ -165,7 +164,7 @@ type Tool interface {
 
 1. 新建 `internal/tools/<name>/tool.go`；
 2. 实现四个方法，Parameters 返回 JSON Schema；
-3. 在 `cmd/agent/main.go` 里通过 `agent.WithTools(mytool.New(...))` 注册；
+3. 在 `cmd/tinycode/main.go` 里通过 `agent.WithTools(mytool.New(...))` 注册；
 
 不需要修改任何核心代码。
 
@@ -242,14 +241,14 @@ PowerShell：
 ```powershell
 $env:OPENAI_API_KEY = "sk-..."
 $env:OPENAI_MODEL   = "gpt-4o-mini"   # 可选
-go run ./cmd/agent
+go run ./cmd/tinycode
 ```
 
 Bash：
 
 ```bash
 export OPENAI_API_KEY=sk-...
-go run ./cmd/agent
+go run ./cmd/tinycode
 ```
 
 ### 8.3 示例会话
@@ -269,7 +268,7 @@ go run ./cmd/agent
 [agent] loop.done [content_len 128]
 
 Agent> 当前目录下共有以下 Go 文件：
-- cmd/agent/main.go
+- cmd/tinycode/main.go
 - internal/agent/agent.go
 - ...
 ```
@@ -281,7 +280,7 @@ Agent> 当前目录下共有以下 Go 文件：
 | 文件                                        | 职责                                  |
 |--------------------------------------------|---------------------------------------|
 | [go.mod](../go.mod)                        | 模块定义（零第三方依赖）                  |
-| [cmd/agent/main.go](../cmd/agent/main.go)  | CLI 入口 + REPL                        |
+| [cmd/tinycode/main.go](../cmd/tinycode/main.go) | CLI 入口 + REPL                   |
 | [internal/agent/types.go](../internal/agent/types.go) | 中性消息模型                    |
 | [internal/agent/model.go](../internal/agent/model.go) | Model 接口                      |
 | [internal/agent/tool.go](../internal/agent/tool.go)   | Tool 接口 + Registry            |

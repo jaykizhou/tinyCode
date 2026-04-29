@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -24,6 +25,7 @@ type Agent struct {
 	conv          *Conversation
 	maxIterations int
 	log           func(event string, kv ...any)
+	sink          EventSink
 }
 
 // NewAgent 构造 Agent。除了 WithModel 是必选，其余 Option 均可省略。
@@ -34,6 +36,7 @@ func NewAgent(opts ...Option) (*Agent, error) {
 		conv:          NewConversation(),
 		maxIterations: 20,
 		log:           func(string, ...any) {}, // 默认空日志，避免 nil 判断
+		sink:          noopSink{},              // 默认空 sink，避免 nil 判断
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -62,7 +65,9 @@ func (a *Agent) RunLoop(ctx context.Context, userInput string) (string, error) {
 	a.conv.Append(Message{Role: RoleUser, Content: userInput})
 
 	for i := 0; i < a.maxIterations; i++ {
-		a.log("loop.iter", "n", i+1)
+		iter := i + 1
+		a.log("loop.iter", "n", iter)
+		a.sink.Emit(Event{Kind: EventIterStart, Iter: iter})
 
 		resp, err := a.model.Complete(ctx, CompletionRequest{
 			SystemPrompt: a.systemPrompt,
@@ -70,7 +75,20 @@ func (a *Agent) RunLoop(ctx context.Context, userInput string) (string, error) {
 			Tools:        a.registry.Definitions(),
 		})
 		if err != nil {
-			return "", fmt.Errorf("model complete (iter %d): %w", i+1, err)
+			// 对取消场景做特殊处理：视为"正常终止"，不发 EventError
+			if errors.Is(err, context.Canceled) {
+				a.sink.Emit(Event{
+					Kind:    EventDone,
+					Iter:    iter,
+					Payload: "context canceled",
+				})
+				return "", err
+			}
+
+			wrapped := fmt.Errorf("model complete (iter %d): %w", iter, err)
+			a.sink.Emit(Event{Kind: EventError, Iter: iter, Payload: wrapped.Error()})
+			a.sink.Emit(Event{Kind: EventDone, Iter: iter, Payload: wrapped.Error()})
+			return "", wrapped
 		}
 
 		// 不管有没有 tool_calls，都把模型响应完整追加到历史里，
@@ -80,25 +98,43 @@ func (a *Agent) RunLoop(ctx context.Context, userInput string) (string, error) {
 			Content:   resp.Message.Content,
 			ToolCalls: resp.ToolCalls,
 		})
+		a.sink.Emit(Event{Kind: EventAssistantReply, Iter: iter, Payload: resp.Message.Content})
 
 		// 没有工具调用：模型认为任务完成，退出循环。
 		if len(resp.ToolCalls) == 0 {
 			a.log("loop.done", "content_len", len(resp.Message.Content))
+			a.sink.Emit(Event{Kind: EventDone, Iter: iter, Payload: resp.Message.Content})
 			return resp.Message.Content, nil
 		}
 
 		// 有工具调用：顺序执行，每个结果立即追加成 role=tool 消息。
 		for _, call := range resp.ToolCalls {
 			a.log("tool.exec", "name", call.Name, "id", call.ID)
+			a.sink.Emit(Event{
+				Kind:       EventToolCall,
+				Iter:       iter,
+				ToolName:   call.Name,
+				ToolCallID: call.ID,
+				Args:       call.Arguments,
+			})
 			output := a.executeTool(ctx, call)
 			a.conv.Append(Message{
 				Role:       RoleTool,
 				ToolCallID: call.ID,
 				Content:    output,
 			})
+			a.sink.Emit(Event{
+				Kind:       EventToolResult,
+				Iter:       iter,
+				ToolName:   call.Name,
+				ToolCallID: call.ID,
+				Payload:    output,
+			})
 		}
 	}
 
+	a.sink.Emit(Event{Kind: EventError, Payload: ErrMaxIterations.Error()})
+	a.sink.Emit(Event{Kind: EventDone, Payload: ErrMaxIterations.Error()})
 	return "", ErrMaxIterations
 }
 
