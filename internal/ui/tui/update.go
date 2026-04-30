@@ -23,6 +23,7 @@ type copyFeedbackMsg struct{}
 // 分派规则：
 //   - 窗口尺寸：resize。
 //   - 按键：根据 keyMap 分流。
+//   - 鼠标：滚轮交给 viewport，左键点击用于切换气泡折叠。
 //   - agent 事件：把结构化事件翻译成气泡。
 //   - agent 完成：收尾 busy 状态；
 //   - 其他：下放到子组件（viewport / textarea / spinner）。
@@ -33,6 +34,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.onKey(msg)
+
+	case tea.MouseMsg:
+		return m.onMouse(msg)
 
 	case agentEventMsg:
 		return m.onAgentEvent(agent.Event(msg))
@@ -59,26 +63,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // onResize 处理终端尺寸变化。按高度比例分配 viewport / textarea。
+//
+// viewport 高度采用“内容自适应 + 可用高度上限”的策略：
+//   - 先按 5 段式扣除状态栏/输入头/输入框/hint/安全间距，算出可用最大高度 maxVpHeight；
+//   - 再由 refreshViewport 按实际内容行数向下收缩，避免欢迎页等短内容下方出现大片空白、
+//     把输入框挤到终端底部的观感问题。
 func (m Model) onResize(msg tea.WindowSizeMsg) Model {
 	m.width = msg.Width
 	m.height = msg.Height
 
-	statusHeight := 1
-	inputHeaderHeight := 1
 	// 与 newModel 保持一致：输入区默认 1 行，避免 placeholder 被折行重绘。
 	inputHeight := 1
-	hintHeight := 1
-	// 1 行安全间距（防止终端满屏后 textarea 在最后一行被部分遮挡）。
-	vpHeight := msg.Height - statusHeight - inputHeaderHeight - inputHeight - hintHeight - 1
-	if vpHeight < 3 {
-		vpHeight = 3
-	}
 	m.viewport.Width = msg.Width
-	m.viewport.Height = vpHeight
 	m.input.SetWidth(msg.Width)
 	m.input.SetHeight(inputHeight)
 	m.refreshViewport()
 	return m
+}
+
+// maxViewportHeight 返回当前窗口下 viewport 允许的最大高度。
+// 状态栏 1 行 + 输入头 1 行 + 输入框 1 行 + hint 1 行 + 1 行安全间距。
+func (m Model) maxViewportHeight() int {
+	const reserved = 1 + 1 + 1 + 1 + 1
+	vpHeight := m.height - reserved
+	if vpHeight < 3 {
+		vpHeight = 3
+	}
+	return vpHeight
 }
 
 // onKey 处理按键。
@@ -256,8 +267,60 @@ func (m Model) onAgentDone(msg agentDoneMsg) Model {
 			})
 		}
 	}
+	// 一轮对话结束：将本轮产生的气泡批量折叠，只保留前两行预览，
+	// 减少历史轮次对视线的干扰。user 气泡通常也很短，isCollapsible 会自动将其忽略。
+	m.collapseTurn(m.turnStartIdx)
 	m.refreshViewport()
 	return m
+}
+
+// collapseTurn 把从 from 下标开始到 history 末尾的所有气泡置为折叠态。
+func (m *Model) collapseTurn(from int) {
+	if from < 0 {
+		from = 0
+	}
+	for i := from; i < len(m.history); i++ {
+		m.history[i].collapsed = true
+	}
+}
+
+// onMouse 处理鼠标事件。
+//
+// 设计原则：
+//   - 默认将所有鼠标事件通过 updateChildren 转发给子组件，
+//     这样 viewport 的滚轮滚动和 textarea 的光标定位等行为都能正常工作；
+//   - 仅对 “左键按下 + Y 落在气泡头部行” 这个精准情境切换折叠状态，
+//     避免用户拖选正文、或者鼠标摆动时的 release/motion 事件意外触发折叠。
+//
+// 重要：折叠触发之后仍然返回 m,nil 不转发，给用户一个明确的交互闭环，
+// 防止视口同一点击事件被 textarea 二次解释导致 cursor 跳动。
+func (m Model) onMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+		const statusHeight = 1
+		if msg.Y >= statusHeight && msg.Y < statusHeight+m.viewport.Height {
+			contentLine := msg.Y - statusHeight + m.viewport.YOffset
+			for _, r := range m.bubbleRanges {
+				// 仅当点击落在气泡“头行”（range.start）时才触发折叠切换。
+				// 若放宽到整个 range 区间，用户在气泡正文上的每一次点击（
+				// 包括文本拖选起点、多次点击等）都会被当做折叠/展开来进行，
+				// 折展变化会导致气泡在视口内上下跃迁、后续点击命中不同气泡，
+				// 视觉上恰好形成“标题重复出现多次”的故障现象。
+				if contentLine == r.start {
+					if r.idx >= 0 && r.idx < len(m.history) {
+						m.history[r.idx].collapsed = !m.history[r.idx].collapsed
+						m.refreshViewport()
+					}
+					return m, nil
+				}
+			}
+		}
+	}
+	// 其余情形（滚轮、按键释放、移动、点击空白区或非头行行）都下放给子组件：
+	// 这维持 viewport 滚轮滚动与 textarea 光标交互的完整行为，
+	// 也比“提前过滤 IsWheel”更鲁棒——在 Windows Terminal / PowerShell 下，部分终端
+	// 会将滚轮事件的 Button 报外为 None 或新类型，IsWheel() 返回 false 会导致错过
+	// 滚动；全量下发 viewport 后由 viewport.Update 自行根据 MouseWheelEnabled 筛选。
+	return m.updateChildren(msg)
 }
 
 // updateChildren 把当前未分派的消息交给子组件更新。
@@ -289,8 +352,23 @@ func (m *Model) appendBubble(b bubble) {
 }
 
 // refreshViewport 根据 history 重渲染 viewport 内容，并自动滚到底部。
+// 同时将每个气泡的行号范围保存到 m.bubbleRanges，供鼠标点击定位使用。
+//
+// 高度自适应：当内容行数少于可用最大高度时（如欢迎页），viewport 按内容行数收缩，
+// 避免展示区下方出现大片空白、输入框被挤到终端底部的观感问题。
 func (m *Model) refreshViewport() {
-	m.viewport.SetContent(m.renderHistory())
+	content, ranges := m.renderHistory()
+	m.bubbleRanges = ranges
+
+	maxH := m.maxViewportHeight()
+	lines := strings.Count(content, "\n") + 1
+	if lines < maxH {
+		m.viewport.Height = lines
+	} else {
+		m.viewport.Height = maxH
+	}
+
+	m.viewport.SetContent(content)
 	m.viewport.GotoBottom()
 }
 

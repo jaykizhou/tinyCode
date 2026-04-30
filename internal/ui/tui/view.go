@@ -116,56 +116,118 @@ func (m Model) renderInputHeader() string {
 
 // renderHistory 把 history 中的气泡一一渲染成带样式的字符串。
 //
+// 返回：
+//   - content: 最终拼接好的 viewport 内容；
+//   - ranges : 每个气泡在 content 里占据的行号范围，用于鼠标点击定位。
+//
 // 风格：
 //   - 不画边框（避免中英文等宽问题）；
 //   - 每个气泡之间空一行，提升可读性；
 //   - 工具输出类气泡做宽度自适应截断（超长内容保留头尾）。
-func (m Model) renderHistory() string {
+func (m Model) renderHistory() (string, []bubbleRange) {
 	if len(m.history) == 0 {
-		return welcomeText(m.cfg, m.tracePath, m.width)
+		return welcomeText(m.cfg, m.tracePath, m.width), nil
 	}
 
-	var parts []string
-	for _, b := range m.history {
-		parts = append(parts, renderBubble(b, m.width))
+	var (
+		parts  []string
+		ranges = make([]bubbleRange, 0, len(m.history))
+		line   = 0
+	)
+	for i, b := range m.history {
+		if i > 0 {
+			// strings.Join(parts, "\n\n") 会在前后气泡之间插入一个空行。
+			line++
+		}
+		rendered := renderBubble(b, m.width)
+		n := strings.Count(rendered, "\n") + 1
+		ranges = append(ranges, bubbleRange{idx: i, start: line, end: line + n})
+		parts = append(parts, rendered)
+		line += n
 	}
-	return strings.Join(parts, "\n\n")
+	return strings.Join(parts, "\n\n"), ranges
 }
 
-// renderBubble 根据 bubbleKind 选择对应样式。
+// renderBubble 根据 bubbleKind 选择对应样式，并根据 b.collapsed 输出完整或折叠态。
 //
 // 缩进统一使用 lipgloss PaddingLeft 而非手动拼接空格，
 // 避免 lipgloss 宽度计算时因 ANSI 转义码与 ASCII 空格混用导致的乱码。
 func renderBubble(b bubble, width int) string {
+	// info 类气泡本身单行，不参与折叠。
+	if b.kind == bubbleInfo {
+		return styles.hintText.Render("ℹ " + b.content)
+	}
+
+	collapsed := b.collapsed && isCollapsible(b.content)
+	content := b.content
+	if collapsed {
+		content = collapseContent(b.content, 2)
+	}
+	marker := collapseMarker(collapsed)
+
 	switch b.kind {
 	case bubbleUser:
-		return styles.userLabel.Render("▶ "+b.header) + "\n" +
-			styles.userContent.PaddingLeft(2).Render(b.content)
+		return styles.userLabel.Render(marker+" ▶ "+b.header) + "\n" +
+			styles.userContent.PaddingLeft(2).Render(content)
 
 	case bubbleAssistant:
-		return styles.assistantLabel.Render("◆ "+b.header) + "\n" +
-			styles.assistantText.PaddingLeft(2).Render(b.content)
+		return styles.assistantLabel.Render(marker+" ◆ "+b.header) + "\n" +
+			styles.assistantText.PaddingLeft(2).Render(content)
 
 	case bubbleToolCall:
-		head := styles.toolCallLabel.Render("▷ " + b.header)
-		body := styles.toolCallText.PaddingLeft(2).Render(b.content)
+		head := styles.toolCallLabel.Render(marker + " ▷ " + b.header)
+		body := styles.toolCallText.PaddingLeft(2).Render(content)
 		return head + "\n" + body
 
 	case bubbleToolResult:
-		head := styles.toolCallLabel.Render("◀ " + b.header)
-		body := styles.toolResultText.PaddingLeft(2).Render(
-			truncateLong(b.content, maxToolResult(width)),
-		)
+		head := styles.toolCallLabel.Render(marker + " ◀ " + b.header)
+		// 折叠时 content 已经是前两行+提示，不再再做头尾截断；展开时继续保留原有边界。
+		var body string
+		if collapsed {
+			body = styles.toolResultText.PaddingLeft(2).Render(content)
+		} else {
+			body = styles.toolResultText.PaddingLeft(2).Render(
+				truncateLong(content, maxToolResult(width)),
+			)
+		}
 		return head + "\n" + body
 
 	case bubbleError:
-		return styles.errorLabel.Render("✖ "+b.header) + "\n" +
-			styles.errorText.PaddingLeft(2).Render(b.content)
+		return styles.errorLabel.Render(marker+" ✖ "+b.header) + "\n" +
+			styles.errorText.PaddingLeft(2).Render(content)
 
 	case bubbleInfo:
 		return styles.hintText.Render("ℹ " + b.content)
 	}
 	return b.content
+}
+
+// isCollapsible 判断一条 content 是否有折叠价值：不足 3 行的内容折叠后视觉上几乎没变化，
+// 没必要增加用户点击负担，直接展示原文。
+func isCollapsible(s string) bool {
+	return strings.Count(s, "\n") >= 2
+}
+
+// collapseMarker 返回气泡头部的展开/折叠标记字符。
+func collapseMarker(collapsed bool) string {
+	if collapsed {
+		return "▸"
+	}
+	return "▾"
+}
+
+// collapseContent 把 content 截断到前 head 行，并在末尾追加一条较淡的提示提醒用户可点击展开。
+func collapseContent(s string, head int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= head {
+		return s
+	}
+	remaining := len(lines) - head
+	trimmed := strings.Join(lines[:head], "\n")
+	tail := styles.hintText.Render(
+		fmt.Sprintf("… ▸ 点击展开（还有 %d 行）", remaining),
+	)
+	return trimmed + "\n" + tail
 }
 
 // truncateLong 在工具结果过长时做头尾保留，防止 viewport 内容过长、滚动负担过重。

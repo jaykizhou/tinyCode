@@ -27,6 +27,18 @@ type bubble struct {
 	header   string // 例如 "你"/"Agent"/"tool: shell"
 	content  string // 正文
 	metadata string // 辅助信息（如 tool_call id / args 摘要）
+
+	// collapsed 标记当前气泡是否处于折叠展示状态。
+	// 一轮对话结束时由 onAgentDone 批量置 true，鼠标左键点击时翻转。
+	collapsed bool
+}
+
+// bubbleRange 记录一个气泡在 viewport 内容里的行号范围（左闭右开），
+// 用于把鼠标点击的屏幕坐标反查到具体气泡，触发折叠/展开。
+type bubbleRange struct {
+	idx   int // 对应 Model.history 下标
+	start int // 内容首行（inclusive）
+	end   int // 内容末行（exclusive）
 }
 
 // agentEventMsg 在 Update 中把 agent.Event 投递为 tea.Msg。

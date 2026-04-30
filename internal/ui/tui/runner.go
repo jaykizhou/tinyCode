@@ -43,6 +43,8 @@ func (m *Model) submitInput() tea.Cmd {
 		header:  "你",
 		content: text,
 	})
+	// 记录本轮对话的起始下标（user 气泡自身），onAgentDone 据此批量折叠本轮产生的气泡。
+	m.turnStartIdx = len(m.history) - 1
 	m.input.Reset()
 	m.applyInputMode(true)
 	return tea.Batch(m.runAgentCmd(text), m.spinner.Tick)

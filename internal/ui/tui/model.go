@@ -45,6 +45,14 @@ type Model struct {
 
 	// 复制反馈：显示"已复制"提示的剩余帧数（>0 时在状态栏展示）
 	copyFeedback int
+
+	// turnStartIdx 记录当前/最近一轮对话在 history 中的起始下标。
+	// submitInput 时更新为 user 气泡的下标，onAgentDone 据此批量折叠本轮气泡。
+	turnStartIdx int
+
+	// bubbleRanges 由 refreshViewport 在每次重渲染时填入，
+	// 记录每个气泡在 viewport 内容里的行号范围，供鼠标点击反查使用。
+	bubbleRanges []bubbleRange
 }
 
 // newModel 在 program.go 中被调用，封装初始默认值，便于单元测试替换。
@@ -82,18 +90,35 @@ func newModel(ctx context.Context, a *agent.Agent, cfg config.RuntimeConfig, sin
 	return m
 }
 
-// applyInputMode 根据 busy 状态同步 textarea 的 Prompt 与 Placeholder。
+// applyInputMode 根据 busy 状态同步 textarea 的 Prompt。
 //
-// 之所以把这份开关逻辑抽成方法，是为了保证在 newModel / submitInput /
-// onAgentDone 三个关键节点上使用同一套外观规则，避免状态飘移。
+// 为什么不用 m.input.Prompt + SetWidth：
+//
+//	bubbles 的 SetWidth 会用 uniseg.StringWidth(m.Prompt) 估算 promptWidth，
+//	而我们的 Prompt 带 ANSI 颜色转义（styles.inputPromptXxx.Render(...)），
+//	uniseg 不认这些控制序列，会把转义字节当作普通字符累加宽度，得到一个
+//	远大于视觉宽度（2）的值；随后 m.width（每行可容纳的内容宽度）被压缩到
+//	接近 0，textarea 会对任意短输入做硬换行，加上每行自带 prompt 就出现
+//	“‼” 下面再重复多行 “❯” 的伪多行现象。
+//
+// 解决方案：改用 SetPromptFunc(promptWidth=2, ...) 显式告诉 bubbles 这个
+// prompt 的视觉宽度就是 2 列——之后 SetWidth 的 uniseg 路径会被短路，
+// 不再重新计算 promptWidth，m.width 始终正确。prompt 字符串本身仍可以
+// 携带 ANSI 颜色，终端按正常方式渲染。
+//
+// Placeholder 统一置空：相同原因——uniseg 同样会把 placeholder 按畸变
+// 宽度折行；视觉提示已由输入头胶囊标签（"▸ 你的输入" / "▸ 正在处理"）和
+// 底部 hint 行承担，placeholder 是冗余，干脆不设。
 func (m *Model) applyInputMode(busy bool) {
+	var prompt string
 	if busy {
-		m.input.Prompt = styles.inputPromptBusy.Render("‼") + " "
-		m.input.Placeholder = "Agent 正在处理中，请稍候…"
-		return
+		prompt = styles.inputPromptBusy.Render("‼") + " "
+	} else {
+		prompt = styles.inputPromptIdle.Render("❯") + " "
 	}
-	m.input.Prompt = styles.inputPromptIdle.Render("❯") + " "
-	m.input.Placeholder = "输入消息…"
+	// promptWidth=2 对应 "❯ "/"‼ " 的可视宽度（1 个符号 + 1 个空格）。
+	m.input.SetPromptFunc(2, func(int) string { return prompt })
+	m.input.Placeholder = ""
 }
 
 // Init 实现 tea.Model：启动监听事件通道 + 启动 spinner tick。

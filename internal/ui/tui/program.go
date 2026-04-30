@@ -48,6 +48,12 @@ func Run(parent context.Context, cfg config.RuntimeConfig) error {
 		m,
 		tea.WithAltScreen(),
 		tea.WithContext(ctx),
+		// 开启鼠标事件：
+		//   1. viewport 的 MouseWheelEnabled 默认开启，但仅当 Program
+		//      放行 MouseMsg 时才能收到滚轮，否则终端滚轮在 AltScreen 里完全失效；
+		//   2. 气泡点击折叠/展开交互也依赖左键 MouseMsg。
+		//   使用 CellMotion 而非 AllMotion：只在按键/滚动时上报，避免移动洪流浪费事件。
+		tea.WithMouseCellMotion(),
 	)
 
 	// 程序退出后再关闭 sink，保证 RunLoop 即使已结束也不会写入已关闭 channel。
