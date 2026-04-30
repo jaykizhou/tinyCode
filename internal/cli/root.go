@@ -22,7 +22,7 @@ func NewRootCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "tinycode",
-		Short:         "最小可用的 one-loop Coding Agent",
+		Short:         "最小可用的 A tiny Coding Agent",
 		Long:          "TinyCode 是一个以 one-loop 为核心思想的轻量 Coding Agent，默认启动 Bubble Tea TUI。",
 		SilenceUsage:  true,
 		SilenceErrors: false,

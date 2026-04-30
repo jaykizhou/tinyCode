@@ -1,6 +1,6 @@
 # tinyCode
 
-> **一个最小可用的 one-loop Coding Agent** —— 让大模型在本地终端里"活"起来。
+> **一个最小可用的 A tiny Coding Agent** —— 让大模型在本地终端里"活"起来。
 
 ---
 

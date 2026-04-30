@@ -8,7 +8,7 @@
 
 ### 1.1 tinyCode 是什么
 
-tinyCode 是一个**最小可用的 one-loop Coding Agent**。它的核心使命很简单：让大模型在本地终端里"活"起来——用户输入一句话，Agent 自动决定是否需要调用工具（比如执行 shell 命令），再把结果汇总成最终回复。
+tinyCode 是一个**最小可用的 A tiny Coding Agent**。它的核心使命很简单：让大模型在本地终端里"活"起来——用户输入一句话，Agent 自动决定是否需要调用工具（比如执行 shell 命令），再把结果汇总成最终回复。
 
 它解决的痛点是：大多数 Agent 框架为了"可扩展"而变得臃肿，中间件链、图执行器、插件系统层层叠加，反而让人看不清"模型到底做了什么"。tinyCode 反其道而行，用不到 1500 行代码证明：**一个 for 循环 + 两个接口，足以支撑 90% 的编程助手场景。**
 
@@ -561,7 +561,7 @@ func NewRootCmd() *cobra.Command {
 
     cmd := &cobra.Command{
         Use:   "tinycode",
-        Short: "最小可用的 one-loop Coding Agent",
+        Short: "最小可用的 A tiny Coding Agent",
         RunE: func(cmd *cobra.Command, args []string) error {
             if err := cfg.Finalize(cmd.Flags()); err != nil { return err }
             return tui.Run(cmd.Context(), *cfg)

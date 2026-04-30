@@ -1,8 +1,8 @@
-package tui
+﻿package tui
 
 import "github.com/charmbracelet/bubbles/key"
 
-// keyMap 集中声明全部快捷键。把键位与行为解耦，方便后续挂 help 面板或用户自定义。
+// keyMap 集中声明全部快捷键。把键位与行为解耦在这里，方便后续做 help 面板或用户自定义。
 type keyMap struct {
 	Submit     key.Binding
 	Newline    key.Binding
@@ -11,6 +11,7 @@ type keyMap struct {
 	ScrollUp   key.Binding
 	ScrollDown key.Binding
 	Cancel     key.Binding
+	Copy       key.Binding
 }
 
 // defaultKeyMap 返回项目默认的键位表。
@@ -43,6 +44,10 @@ func defaultKeyMap() keyMap {
 		Cancel: key.NewBinding(
 			key.WithKeys("ctrl+c"),
 			key.WithHelp("ctrl+c", "取消/退出"),
+		),
+		Copy: key.NewBinding(
+			key.WithKeys("ctrl+y"),
+			key.WithHelp("ctrl+y", "复制对话内容"),
 		),
 	}
 }

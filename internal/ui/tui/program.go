@@ -47,7 +47,6 @@ func Run(parent context.Context, cfg config.RuntimeConfig) error {
 	p := tea.NewProgram(
 		m,
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 		tea.WithContext(ctx),
 	)
 
