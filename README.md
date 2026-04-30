@@ -104,21 +104,40 @@ go build -o tinycode ./cmd/tinycode
 
 ### 配置说明
 
-tinyCode 通过**环境变量**进行基础配置，以下是必填和常用项：
+tinyCode 支持 **三种配置来源**，按优先级从高到低依次叠加，下层仅在上层未提供时生效：
 
-| 环境变量 | 必填 | 默认值 | 说明 |
-|----------|------|--------|------|
-| `OPENAI_API_KEY` | **是** | — | OpenAI API Key |
-| `OPENAI_BASE_URL` | 否 | `https://api.openai.com/v1` | 兼容 API 的 Base URL |
-| `OPENAI_MODEL` | 否 | `gpt-4o-mini` | 模型名称 |
+**CLI Flag > 环境变量 > `config.yaml` > 内置默认值**
 
-**快速设置示例：**
+| 字段 | CLI flag | 环境变量 | 配置文件键 | 默认值 |
+|------|----------|----------|------------|--------|
+| API Key | `--api-key` | `OPENAI_API_KEY` | `api_key` | — （必填） |
+| Base URL | `--base-url` | `OPENAI_BASE_URL` | `base_url` | `https://api.openai.com/v1` |
+| 模型名 | `--model` | `OPENAI_MODEL` | `model` | `gpt-4o-mini` |
+
+> 工作目录 `--work-dir`、最大迭代数 `--max-iter` 等其他字段仍只从 flag/环境变量读取，不进入配置文件。
+
+**方式一：环境变量（推荐）**
 
 ```bash
 export OPENAI_API_KEY="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
 export OPENAI_BASE_URL="https://api.openai.com/v1"
 export OPENAI_MODEL="gpt-4o-mini"
 ```
+
+**方式二：`config.yaml` 文件**
+
+在运行目录放置一个 `config.yaml`（或通过 `--config /path/to/file.yaml` 指定）：
+
+```yaml
+# tinyCode 运行配置（所有字段可选）
+api_key: sk-xxxxxxxxxxxxxxxxxxxxxxxx
+base_url: https://api.openai.com/v1
+model: gpt-4o-mini
+```
+
+- 文件不存在时静默忽略，不会报错；
+- 未知字段会被忽略，便于向前兼容；
+- 支持行末 `#` 注释与单/双引号包裹的值。
 
 配置完成后，直接运行 `tinycode` 即可启动 TUI 界面：
 
@@ -149,9 +168,10 @@ tinycode version
 
 | 参数 | 简写 | 默认值 | 说明 |
 |------|------|--------|------|
-| `--api-key` | — | 读取 `OPENAI_API_KEY` | API Key；不填则读取环境变量 |
+| `--api-key` | — | 读取 `OPENAI_API_KEY` / `config.yaml` | API Key；可通过环境变量或配置文件提供 |
 | `--base-url` | — | `https://api.openai.com/v1` | OpenAI 兼容 API 的 Base URL |
 | `--model` | — | `gpt-4o-mini` | 模型名称 |
+| `--config` | — | `config.yaml` | YAML 配置文件路径；文件不存在时忽略 |
 | `--work-dir` | — | 当前目录 | Shell 工具的工作目录 |
 | `--max-iter` | — | `25` | Agent 主循环最大迭代次数 |
 | `--system` | — | 内置提示词 | 覆盖默认系统提示词 |
@@ -234,7 +254,8 @@ tinyCode/
 │   │   ├── repl_cmd.go          # repl 子命令
 │   │   ├── version_cmd.go       # version 子命令
 │   │   ├── config/
-│   │   │   └── config.go        # 三层配置优先级管理
+│   │   │   ├── config.go        # 四层配置优先级合并（flag/env/file/default）
+│   │   │   └── file.go          # config.yaml 最小 YAML 解析器
 │   │   └── bootstrap/
 │   │       └── bootstrap.go     # Agent 装配工厂
 │   └── ui/
@@ -366,23 +387,27 @@ go mod tidy
 
 ## 8. 配置优先级
 
-tinyCode 的配置采用**三层优先级**机制，从高到低依次为：
+tinyCode 的配置采用**四层优先级**机制，从高到低依次为：
 
-**CLI Flag > 环境变量 > 默认值**
+**CLI Flag > 环境变量 > 配置文件 `config.yaml` > 默认值**
 
 | 优先级 | 来源 | 示例 |
 |--------|------|------|
 | 1（最高） | CLI 显式参数 | `--model gpt-4o` |
 | 2 | 环境变量 | `OPENAI_MODEL=gpt-4o-mini` |
-| 3（最低） | 内置默认值 | `gpt-4o-mini` |
+| 3 | 配置文件 | `model: gpt-4o-mini` |
+| 4（最低） | 内置默认值 | `gpt-4o-mini` |
 
 **实际场景举例：**
 
-- 你运行 `tinycode --model gpt-4o` → 使用 `gpt-4o`（flag 优先）
-- 你没传 flag，但设置了 `OPENAI_MODEL=gpt-4o-mini` → 使用 `gpt-4o-mini`
-- 两者都没有 → 使用默认值 `gpt-4o-mini`
+- 你运行 `tinycode --model gpt-4o` → 使用 `gpt-4o`（flag 最高优先级）
+- 没传 flag，但设置了 `OPENAI_MODEL=gpt-4o-mini` → 使用 `gpt-4o-mini`
+- flag 与环境变量都没有，`config.yaml` 里写了 `model: gpt-4o-mini` → 使用配置文件值
+- 以上皆无 → 使用默认值 `gpt-4o-mini`
 
-这种设计的好处是：**日常通过环境变量一次性配置，临时需求通过 flag 覆盖**，灵活且不易出错。
+> 只有 `api_key` / `base_url` / `model` 这三项同时支持配置文件；其他字段（如 `work_dir`）请通过 flag 或环境变量传入。
+
+这种设计的好处是：**日常通过 `config.yaml` 或环境变量固定全局配置，临时需求通过 flag 覆盖**，灵活且不易出错。
 
 ---
 

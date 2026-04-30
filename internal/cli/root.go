@@ -27,7 +27,7 @@ func NewRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cfg.Finalize(); err != nil {
+			if err := cfg.Finalize(cmd.Flags()); err != nil {
 				return err
 			}
 			return tui.Run(cmd.Context(), *cfg)

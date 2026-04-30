@@ -17,7 +17,7 @@ func newReplCmd(cfg *config.RuntimeConfig) *cobra.Command {
 		Short: "以纯文本 REPL 的方式与 Agent 交互",
 		Long:  "纯文本 REPL：一行输入 → Agent 一次 RunLoop → 打印结果，适合 CI / 无 TTY 场景。",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := cfg.Finalize(); err != nil {
+			if err := cfg.Finalize(cmd.Flags()); err != nil {
 				return err
 			}
 			return repl.Run(cmd.Context(), *cfg)

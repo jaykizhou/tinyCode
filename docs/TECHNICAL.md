@@ -47,7 +47,9 @@ tinyCode/
 │   │   ├── root.go            # Cobra 根命令
 │   │   ├── repl_cmd.go        # repl 子命令
 │   │   ├── version_cmd.go     # version 子命令
-│   │   ├── config/config.go   # 三层配置优先级
+│   │   ├── config/
+│   │   │   ├── config.go      # 四层配置优先级合并（flag/env/file/default）
+│   │   │   └── file.go        # config.yaml 最小 YAML 解析器
 │   │   └── bootstrap/bootstrap.go # Agent 装配工厂
 │   └── ui/
 │       ├── repl/repl.go       # 纯文本 REPL
@@ -523,7 +525,7 @@ func NewRootCmd() *cobra.Command {
         Use:   "tinycode",
         Short: "最小可用的 one-loop Coding Agent",
         RunE: func(cmd *cobra.Command, args []string) error {
-            if err := cfg.Finalize(); err != nil { return err }
+            if err := cfg.Finalize(cmd.Flags()); err != nil { return err }
             return tui.Run(cmd.Context(), *cfg)
         },
     }
@@ -543,57 +545,78 @@ func NewRootCmd() *cobra.Command {
 
 ### 4.2 配置管理
 
-#### 4.2.1 三层优先级机制
+#### 4.2.1 四层优先级机制
+
+`BindFlags` 只注册 flag 与内置默认值；环境变量与 `config.yaml` 的合并统一在 `Finalize` 阶段完成，避免 `pflag.Changed()` 无法区分"环境变量填充"和"用户显式 flag"两种情况。
 
 ```go
 func BindFlags(fs *pflag.FlagSet, cfg *RuntimeConfig) {
-    fs.StringVar(&cfg.BaseURL, "base-url",
-        firstNonEmpty(os.Getenv(EnvBaseURL), DefaultBaseURL),
+    fs.StringVar(&cfg.BaseURL, "base-url", DefaultBaseURL,
         "OpenAI 兼容 API 的 base URL")
-    fs.StringVar(&cfg.Model, "model",
-        firstNonEmpty(os.Getenv(EnvModel), DefaultModel),
+    fs.StringVar(&cfg.Model, "model", DefaultModel,
         "模型名称")
-    fs.StringVar(&cfg.APIKey, "api-key",
-        os.Getenv(EnvAPIKey),
-        "API Key；不填则读取环境变量 OPENAI_API_KEY")
+    fs.StringVar(&cfg.APIKey, "api-key", "",
+        "API Key；不填则依次读取环境变量 / 配置文件")
+    fs.StringVar(&cfg.ConfigPath, "config", DefaultConfigPath,
+        "YAML 配置文件路径；文件不存在将被忽略")
+    // ... 其余 flag
 }
 ```
 
-优先级顺序：**CLI Flag > 环境变量 > 默认值**。
+优先级顺序：**CLI Flag > 环境变量 > `config.yaml` > 默认值**。
 
-- 用户显式传 `--model gpt-4o` → 用 flag 值
-- 用户没传 flag 但设置了 `OPENAI_MODEL=gpt-4o-mini` → 用环境变量
-- 两者都没有 → 用 `DefaultModel = "gpt-4o-mini"`
+- 用户显式传 `--model gpt-4o` → 用 flag 值；
+- 未传 flag 但设置了 `OPENAI_MODEL=gpt-4o-mini` → 用环境变量；
+- 前两者都没有，`config.yaml` 中 `model: foo-bar` → 用文件值；
+- 以上都无 → 用 `DefaultModel = "gpt-4o-mini"`。
 
-`firstNonEmpty` 是一个小巧的辅助函数，但它是整个优先级机制的"粘合剂"：
+合并粘合剂是一个小巧的 `applyStringOverride`：
 
 ```go
-func firstNonEmpty(vals ...string) string {
-    for _, v := range vals {
-        if v != "" {
-            return v
-        }
-    }
-    return ""
+// 1. flag 被用户显式改过 → 保留 target；
+// 2. env 非空 → env 覆盖；
+// 3. 文件值非空 → 文件覆盖；
+// 4. 否则保留 BindFlags 写入的默认值。
+func applyStringOverride(fs *pflag.FlagSet, name string, target *string, envVal, fileVal string) {
+    if fs != nil && fs.Changed(name) { return }
+    if envVal != ""  { *target = envVal; return }
+    if fileVal != "" { *target = fileVal; return }
 }
 ```
 
-#### 4.2.2 RuntimeConfig 与 Finalize 校验流程
+> 目前只有 `api_key` / `base_url` / `model` 三项进入配置文件；`work_dir`、`max_iter` 等仍只接受 flag 或环境变量。
+
+#### 4.2.2 RuntimeConfig 与 Finalize 合并流程
 
 ```go
 type RuntimeConfig struct {
-    APIKey        string // 必填
+    APIKey        string // 必填（可来自 flag/env/file）
     BaseURL       string // 默认 https://api.openai.com/v1
     Model         string // 默认 gpt-4o-mini
     WorkDir       string // Shell 工作目录
     MaxIterations int    // 默认 25
     SystemPrompt  string // 覆盖默认提示
     Verbose       bool   // 详细日志
+    ConfigPath    string // YAML 配置文件路径；不存在则忽略
 }
 
-func (c *RuntimeConfig) Finalize() error {
+func (c *RuntimeConfig) Finalize(fs *pflag.FlagSet) error {
+    // 1) 读取配置文件（文件不存在时返回空 FileConfig + nil）
+    file, err := LoadFile(c.ConfigPath)
+    if err != nil && !errors.Is(err, os.ErrNotExist) {
+        return fmt.Errorf("读取配置文件失败: %w", err)
+    }
+
+    // 2) 三个字段按 flag > env > file > default 合并
+    applyStringOverride(fs, "api-key",  &c.APIKey,  os.Getenv(EnvAPIKey),  file.APIKey)
+    applyStringOverride(fs, "base-url", &c.BaseURL, os.Getenv(EnvBaseURL), file.BaseURL)
+    applyStringOverride(fs, "model",    &c.Model,  os.Getenv(EnvModel),   file.Model)
+
+    // 3) 校验与补全
     if strings.TrimSpace(c.APIKey) == "" {
-        return fmt.Errorf("缺少 API Key，请设置环境变量 OPENAI_API_KEY 或使用 --api-key", EnvAPIKey)
+        return fmt.Errorf(
+            "缺少 API Key，请通过 --api-key、环境变量 %s 或配置文件 %s 提供",
+            EnvAPIKey, c.effectiveConfigPath())
     }
     if c.WorkDir == "" {
         wd, err := os.Getwd()
@@ -607,7 +630,9 @@ func (c *RuntimeConfig) Finalize() error {
 }
 ```
 
-为什么把校验放在 `Finalize()` 而不是 `BindFlags` 里？因为 `BindFlags` 只负责"绑定"，不负责"校验"。有些配置（比如 `WorkDir`）需要在运行时才能确定（获取当前目录），而且子命令可能有自己的特殊校验逻辑。把校验推迟到 `RunE` 开始时，给了配置一个"最后的补全机会"。
+为什么 `Finalize` 需要接收 `*pflag.FlagSet`？因为只有 FlagSet 才知道某个 flag 是"用户显式写了"还是"取的默认值"。拿到这个信号，才能精准表达"flag 最高优先级，但没传 flag 时应回退到环境变量"的语义。
+
+为什么要把 `LoadFile` 的调用也延后到 `Finalize`？因为 `ConfigPath` 本身也是 flag，必须等 Cobra 把命令行参数解析完才能确定具体路径。把文件读取、环境变量合并、字段校验三步放在同一个入口完成，保持了"一个 RunE 前置处理即装配完成"的单一职责。
 
 ### 4.3 Bootstrap 装配
 
@@ -880,7 +905,7 @@ func (m *mockModel) Complete(ctx context.Context, req agent.CompletionRequest) (
 | `agent` | **最高** | RunLoop 全分支、Conversation 并发安全、Registry 顺序保留 |
 | `tools/shell` | 高 | 黑名单命中、超时处理、输出截断、跨平台命令构造 |
 | `model/openai` | 中 | 协议转换函数（toOpenAIMessages 等）、参数解析 |
-| `cli/config` | 中 | Finalize 校验逻辑、优先级合并 |
+| `cli/config` | 中 | Finalize 四层合并（flag/env/file/default）、`LoadFile` YAML 解析（注释/引号/别名/非法行） |
 | `ui/tui` | 低 | Update 消息路由、气泡渲染（偏视觉，可手工验证） |
 | `ui/repl` | 低 | 输入循环、退出命令识别 |
 | `cli/bootstrap` | 低 | 主要是装配流程，集成测试覆盖即可 |
