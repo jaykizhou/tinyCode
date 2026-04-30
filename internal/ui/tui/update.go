@@ -65,7 +65,8 @@ func (m Model) onResize(msg tea.WindowSizeMsg) Model {
 
 	statusHeight := 1
 	inputHeaderHeight := 1
-	inputHeight := 3
+	// 与 newModel 保持一致：输入区默认 1 行，避免 placeholder 被折行重绘。
+	inputHeight := 1
 	hintHeight := 1
 	// 1 行安全间距（防止终端满屏后 textarea 在最后一行被部分遮挡）。
 	vpHeight := msg.Height - statusHeight - inputHeaderHeight - inputHeight - hintHeight - 1

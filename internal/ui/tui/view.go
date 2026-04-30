@@ -101,12 +101,16 @@ func (m Model) renderInputHeader() string {
 		ruleFg = styles.inputRuleIdle
 	}
 
-	leftRule := ruleFg.Render("━━")
+	// 分隔线字符使用 U+2500（─），而非 U+2501（━）。
+	// 粗横线在 Windows PowerShell 默认字体（Consolas / Cascadia Code）下
+	// 常无法正确绘制，会被渲染成空白或方框，导致整条输入头视觉消失；
+	// 细横线在所有主流终端字体里都有字形，与欢迎面板分隔线保持一致。
+	leftRule := ruleFg.Render("──")
 	pad := width - lipgloss.Width(leftRule) - lipgloss.Width(label) - lipgloss.Width(right) - 3
 	if pad < 2 {
 		pad = 2
 	}
-	midRule := ruleFg.Render(strings.Repeat("━", pad))
+	midRule := ruleFg.Render(strings.Repeat("─", pad))
 	return leftRule + " " + label + " " + midRule + " " + right
 }
 

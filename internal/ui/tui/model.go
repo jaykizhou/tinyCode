@@ -54,7 +54,11 @@ func newModel(ctx context.Context, a *agent.Agent, cfg config.RuntimeConfig, sin
 	// 在构造末尾一次性初始化为 idle 态。
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
-	ta.SetHeight(3)
+	// 初始单行高度：bubbles 的 textarea 在 Windows 终端下对中文 placeholder
+	// 的可视宽度计算偏小，一旦 height>1 就会在第二行把 placeholder 折行重绘，
+	// 形成“输入消息…”重复出现的错觉。按 1 行起步，Shift+Enter 换行时
+	// textarea 会自己按内容增高，不损失可用性。
+	ta.SetHeight(1)
 	ta.Focus()
 
 	// viewport 初始内容由 renderHistory 统一管理，不在此预设，
