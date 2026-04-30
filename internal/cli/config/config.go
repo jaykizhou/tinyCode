@@ -15,9 +15,11 @@ import (
 
 // 环境变量键名。与 OpenAI 官方约定对齐。
 const (
-	EnvAPIKey  = "OPENAI_API_KEY"
-	EnvBaseURL = "OPENAI_BASE_URL"
-	EnvModel   = "OPENAI_MODEL"
+	EnvAPIKey   = "OPENAI_API_KEY"
+	EnvBaseURL  = "OPENAI_BASE_URL"
+	EnvModel    = "OPENAI_MODEL"
+	EnvTrace    = "TINYCODE_TRACE"     // 非空且非 "0"/"false" 即视为开启
+	EnvTraceDir = "TINYCODE_TRACE_DIR" // 观测日志输出目录
 )
 
 // 默认值常量。
@@ -27,6 +29,8 @@ const (
 	DefaultMaxIterations = 25
 	// DefaultConfigPath 默认在当前工作目录查找；找不到即忽略，不报错。
 	DefaultConfigPath = "config.yaml"
+	// DefaultTraceDir 默认观测日志目录：项目根下 .tinycode/trace。
+	DefaultTraceDir = ".tinycode/trace"
 )
 
 // RuntimeConfig 是运行一次 tinycode 所需的全部配置快照。
@@ -42,6 +46,8 @@ type RuntimeConfig struct {
 	SystemPrompt  string // 覆盖默认系统提示；为空时沿用 agent 内置
 	Verbose       bool   // 是否输出详细事件日志
 	ConfigPath    string // YAML 配置文件路径；不存在则忽略
+	Trace         bool   // 是否开启模型交互观测（写入 JSONL 日志）
+	TraceDir      string // 观测日志输出目录；开启 Trace 且为空时用 DefaultTraceDir
 }
 
 // BindFlags 在给定 FlagSet 上注册所有 CLI flag。
@@ -66,6 +72,10 @@ func BindFlags(fs *pflag.FlagSet, cfg *RuntimeConfig) {
 		"输出工具调用等详细日志")
 	fs.StringVar(&cfg.ConfigPath, "config", DefaultConfigPath,
 		"YAML 配置文件路径；文件不存在将被忽略")
+	fs.BoolVar(&cfg.Trace, "trace", false,
+		"开启模型交互观测，将每次 request/response 写入 JSONL 日志")
+	fs.StringVar(&cfg.TraceDir, "trace-dir", "",
+		"观测日志输出目录；为空时用 "+DefaultTraceDir)
 }
 
 // Finalize 在子命令 RunE 开始时调用，做最后一步合并与校验。
@@ -83,6 +93,13 @@ func (c *RuntimeConfig) Finalize(fs *pflag.FlagSet) error {
 	applyStringOverride(fs, "api-key", &c.APIKey, os.Getenv(EnvAPIKey), file.APIKey)
 	applyStringOverride(fs, "base-url", &c.BaseURL, os.Getenv(EnvBaseURL), file.BaseURL)
 	applyStringOverride(fs, "model", &c.Model, os.Getenv(EnvModel), file.Model)
+
+	// trace 开关：CLI > env > file > 默认（false）。
+	applyBoolOverride(fs, "trace", &c.Trace, parseBoolEnv(os.Getenv(EnvTrace)), file.Trace)
+	applyStringOverride(fs, "trace-dir", &c.TraceDir, os.Getenv(EnvTraceDir), file.TraceDir)
+	if c.Trace && strings.TrimSpace(c.TraceDir) == "" {
+		c.TraceDir = DefaultTraceDir
+	}
 
 	// if strings.TrimSpace(c.APIKey) == "" {
 	// 	return fmt.Errorf(
@@ -119,6 +136,39 @@ func applyStringOverride(fs *pflag.FlagSet, flagName string, target *string, env
 		*target = fileVal
 		return
 	}
+}
+
+// applyBoolOverride 与 applyStringOverride 同思路，用于 bool 开关。
+// env 采用指针语义：nil 表示未设置，非 nil 表示已显式指定值。
+func applyBoolOverride(fs *pflag.FlagSet, flagName string, target *bool, envVal *bool, fileVal bool) {
+	if fs != nil && fs.Changed(flagName) {
+		return
+	}
+	if envVal != nil {
+		*target = *envVal
+		return
+	}
+	if fileVal {
+		*target = true
+	}
+}
+
+// parseBoolEnv 将环境变量解析为三态值：
+//   - 空字符串 → nil（未设置，交由下一层决定）；
+//   - "0"/"false"/"off"/"no" → false；
+//   - 其余 → true。
+func parseBoolEnv(v string) *bool {
+	v = strings.TrimSpace(strings.ToLower(v))
+	if v == "" {
+		return nil
+	}
+	switch v {
+	case "0", "false", "off", "no":
+		f := false
+		return &f
+	}
+	t := true
+	return &t
 }
 
 // effectiveConfigPath 返回给错误信息展示用的配置文件路径。

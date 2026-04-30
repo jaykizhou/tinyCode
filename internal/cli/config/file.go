@@ -13,12 +13,14 @@ import (
 
 // FileConfig 对应 config.yaml 中受支持的字段。
 //
-// 当前仅支持最核心的三项配置：api_key / base_url / model。
-// 其他字段（work_dir、max_iter 等）故意不进入文件配置，保持文件职责单一。
+// 字段设计保持最小：基础三项（api_key / base_url / model）
+// 与观测开关（trace / trace_dir）。其他运行时参数走 CLI flag / env，避免文件臃肿。
 type FileConfig struct {
-	APIKey  string
-	BaseURL string
-	Model   string
+	APIKey   string
+	BaseURL  string
+	Model    string
+	Trace    bool   // trace: true / 1 / on / yes 视为开启
+	TraceDir string // trace_dir: 相对/绝对路径
 }
 
 // LoadFile 读取并解析 YAML 配置文件。
@@ -63,6 +65,10 @@ func LoadFile(path string) (FileConfig, error) {
 			cfg.BaseURL = val
 		case "model":
 			cfg.Model = val
+		case "trace":
+			cfg.Trace = parseYAMLBool(val)
+		case "trace_dir", "tracedir":
+			cfg.TraceDir = val
 		default:
 			// 未知字段保持兼容性：忽略但不报错，避免阻塞升级。
 		}
@@ -117,4 +123,14 @@ func unquote(s string) string {
 		}
 	}
 	return s
+}
+
+// parseYAMLBool 解析 YAML 中的布尔表示法。
+// 视为 true：true / yes / on / 1（大小写不敏感），其余一律为 false。
+func parseYAMLBool(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "true", "yes", "on", "1":
+		return true
+	}
+	return false
 }

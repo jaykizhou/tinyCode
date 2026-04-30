@@ -39,6 +39,7 @@ type Model struct {
 	runCancel context.CancelFunc // 仅在 busy=true 时非 nil
 	width     int
 	height    int
+	tracePath string // 当前运行的观测日志路径；为空即未开启
 }
 
 // newModel 在 program.go 中被调用，封装初始默认值，便于单元测试替换。

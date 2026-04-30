@@ -118,6 +118,10 @@ func (a *Agent) RunLoop(ctx context.Context, userInput string) (string, error) {
 				Args:       call.Arguments,
 			})
 			output := a.executeTool(ctx, call)
+			// 空输出会导致部分 OpenAI 兼容网关拒绝该轮请求，统一用占位符。
+			if output == "" {
+				output = "(工具无输出)"
+			}
 			a.conv.Append(Message{
 				Role:       RoleTool,
 				ToolCallID: call.ID,

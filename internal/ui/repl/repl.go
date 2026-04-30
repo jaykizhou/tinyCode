@@ -25,7 +25,7 @@ import (
 // ctx 来自 cobra：对应 Ctrl+C / SIGTERM 时 cobra 已经注入的取消信号，
 // 这里再包一层 signal.NotifyContext 主要是为了在非 cobra 入口下仍能工作。
 func Run(ctx context.Context, cfg config.RuntimeConfig) error {
-	a, err := bootstrap.Build(cfg, bootstrap.Options{
+	a, art, err := bootstrap.Build(cfg, bootstrap.Options{
 		ExtraAgentOptions: []agent.Option{
 			agent.WithLogger(func(event string, kv ...any) {
 				if cfg.Verbose {
@@ -38,11 +38,18 @@ func Run(ctx context.Context, cfg config.RuntimeConfig) error {
 	if err != nil {
 		return err
 	}
+	// 开启观测时在退出前关闭文件句柄，避免最后一行日志丢失。
+	if art.TraceCloser != nil {
+		defer art.TraceCloser.Close()
+	}
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	printBanner(cfg)
+	if art.TracePath != "" {
+		fmt.Printf("观测日志: %s\n", art.TracePath)
+	}
 
 	scanner := bufio.NewScanner(os.Stdin)
 	// 默认 64KB 对多行粘贴偏小，这里把上限抬到 1MB

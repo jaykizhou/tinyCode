@@ -17,6 +17,8 @@ func clearEnv(t *testing.T) {
 	t.Setenv(config.EnvAPIKey, "")
 	t.Setenv(config.EnvBaseURL, "")
 	t.Setenv(config.EnvModel, "")
+	t.Setenv(config.EnvTrace, "")
+	t.Setenv(config.EnvTraceDir, "")
 }
 
 func TestFinalize_APIKeyEmpty_ReturnsError(t *testing.T) {

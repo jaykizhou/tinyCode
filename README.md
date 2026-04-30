@@ -113,6 +113,8 @@ tinyCode 支持 **三种配置来源**，按优先级从高到低依次叠加，
 | API Key | `--api-key` | `OPENAI_API_KEY` | `api_key` | — （必填） |
 | Base URL | `--base-url` | `OPENAI_BASE_URL` | `base_url` | `https://api.openai.com/v1` |
 | 模型名 | `--model` | `OPENAI_MODEL` | `model` | `gpt-4o-mini` |
+| 观测开关 | `--trace` | `TINYCODE_TRACE` | `trace` | `false` |
+| 观测目录 | `--trace-dir` | `TINYCODE_TRACE_DIR` | `trace_dir` | `.tinycode/trace` |
 
 > 工作目录 `--work-dir`、最大迭代数 `--max-iter` 等其他字段仍只从 flag/环境变量读取，不进入配置文件。
 
@@ -133,6 +135,10 @@ export OPENAI_MODEL="gpt-4o-mini"
 api_key: sk-xxxxxxxxxxxxxxxxxxxxxxxx
 base_url: https://api.openai.com/v1
 model: gpt-4o-mini
+
+# 可选：开启模型交互观测，将每次 request/response/error 写入 JSONL 日志
+trace: true
+trace_dir: .tinycode/trace
 ```
 
 - 文件不存在时静默忽略，不会报错；
@@ -176,6 +182,8 @@ tinycode version
 | `--max-iter` | — | `25` | Agent 主循环最大迭代次数 |
 | `--system` | — | 内置提示词 | 覆盖默认系统提示词 |
 | `--verbose` | `-v` | `false` | 输出工具调用等详细日志 |
+| `--trace` | — | `false` | 开启模型交互观测，将 HTTP request/response 写入 JSONL 日志 |
+| `--trace-dir` | — | `.tinycode/trace` | 观测日志输出目录（开启 `--trace` 时生效） |
 
 **使用示例：**
 
@@ -225,6 +233,49 @@ Agent> 当前项目的 go.mod 内容如下：...
 - 按 **Ctrl+C** 可取消当前正在进行的对话
 - 加 `-v` 参数可以查看工具调用的详细日志
 
+### 模型交互观测（排查错误利器）
+
+当遇到 `status=400` / `status=500` / 超时 / 模型格式不匹配等报错时，tinyCode 可以将与大模型 API 的每次 HTTP 交互原样记录下来，便于事后回放。开启方式：
+
+```bash
+# 方式 1：CLI flag
+tinycode --trace
+tinycode --trace --trace-dir ./debug-logs
+
+# 方式 2：环境变量
+export TINYCODE_TRACE=1
+export TINYCODE_TRACE_DIR=./debug-logs   # 可选
+
+# 方式 3：config.yaml
+# trace: true
+# trace_dir: .tinycode/trace
+```
+
+开启后，每次运行会在观测目录生成一个以时间戳命名的 JSONL 文件，例如：
+
+```
+.tinycode/trace/openai-20260430-150230.jsonl
+```
+
+文件内容为每行一个 JSON 记录，`kind` 字段有三种取值：
+
+| kind | 含义 | 关键字段 |
+|------|------|----------|
+| `request` | 请求发出前 | `url` / `headers` / `payload` |
+| `response` | 收到响应（包括非 2xx） | `status` / `body` / `duration_ms` |
+| `error` | 传输层错误 | `error` / `duration_ms` |
+
+> `Authorization` 等包含凭证的请求头会自动替换为 `***redacted***`，避免 API Key 泄露。
+
+典型排查命令（PowerShell）：
+
+```powershell
+# 看上一次运行中所有非 2xx 响应
+Get-Content .\.tinycode\trace\openai-*.jsonl |
+    ConvertFrom-Json |
+    Where-Object { $_.status -ge 400 }
+```
+
 ---
 
 ## 5. 项目结构
@@ -245,7 +296,8 @@ tinyCode/
 │   │   ├── event.go             # 结构化事件协议
 │   │   └── errors.go            # 可识别错误类型
 │   ├── model/openai/
-│   │   └── client.go            # OpenAI 兼容 HTTP 客户端
+│   │   ├── client.go            # OpenAI 兼容 HTTP 客户端
+│   │   └── observer.go          # 模型交互观测器（JSONL 日志）
 │   ├── tools/shell/
 │   │   ├── shell.go             # 跨平台 Shell 工具
 │   │   └── blacklist.go         # 危险命令黑名单
@@ -405,7 +457,7 @@ tinyCode 的配置采用**四层优先级**机制，从高到低依次为：
 - flag 与环境变量都没有，`config.yaml` 里写了 `model: gpt-4o-mini` → 使用配置文件值
 - 以上皆无 → 使用默认值 `gpt-4o-mini`
 
-> 只有 `api_key` / `base_url` / `model` 这三项同时支持配置文件；其他字段（如 `work_dir`）请通过 flag 或环境变量传入。
+> `api_key` / `base_url` / `model` / `trace` / `trace_dir` 这五项同时支持配置文件；其他字段（如 `work_dir`）请通过 flag 或环境变量传入。
 
 这种设计的好处是：**日常通过 `config.yaml` 或环境变量固定全局配置，临时需求通过 flag 覆盖**，灵活且不易出错。
 

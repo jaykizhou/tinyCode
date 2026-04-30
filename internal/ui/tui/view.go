@@ -79,7 +79,11 @@ func (m Model) renderHint() string {
 //   - 工具输出类气泡做宽度自适应截断（超长内容保留头尾）。
 func (m Model) renderHistory() string {
 	if len(m.history) == 0 {
-		return welcomeText(m.cfg)
+		text := welcomeText(m.cfg)
+		if m.tracePath != "" {
+			text += styles.hintText.Render("观测日志: "+m.tracePath) + "\n"
+		}
+		return text
 	}
 
 	var parts []string

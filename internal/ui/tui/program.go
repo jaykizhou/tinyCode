@@ -28,7 +28,7 @@ func Run(parent context.Context, cfg config.RuntimeConfig) error {
 	defer stop()
 
 	sink := newChannelSink(64)
-	a, err := bootstrap.Build(cfg, bootstrap.Options{
+	a, art, err := bootstrap.Build(cfg, bootstrap.Options{
 		ExtraAgentOptions: []agent.Option{
 			agent.WithEventSink(sink),
 		},
@@ -36,8 +36,13 @@ func Run(parent context.Context, cfg config.RuntimeConfig) error {
 	if err != nil {
 		return err
 	}
+	// 开启观测时，进程退出前关闭 JSONL 文件句柄。
+	if art.TraceCloser != nil {
+		defer art.TraceCloser.Close()
+	}
 
 	m := newModel(ctx, a, cfg, sink)
+	m.tracePath = art.TracePath
 
 	p := tea.NewProgram(
 		m,

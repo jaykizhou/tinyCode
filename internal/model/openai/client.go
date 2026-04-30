@@ -32,6 +32,7 @@ type Client struct {
 	model      string       // 例如 "gpt-4o-mini"
 	httpClient *http.Client // HTTP 客户端（可自定义 Timeout / Transport）
 	temp       float64      // 采样温度，默认 0.1 以追求稳定输出
+	observer   Observer     // 模型交互观测器；默认 NopObserver，不产生开销
 }
 
 // Option 采用 Functional Options 模式配置客户端，与 agent 包保持一致的风格。
@@ -47,6 +48,18 @@ func WithTemperature(t float64) Option {
 	return func(c *Client) { c.temp = t }
 }
 
+// WithObserver 注入一个观测器，用于记录每次与模型的 HTTP 交互。
+// 传 nil 等价于关闭观测。
+func WithObserver(o Observer) Option {
+	return func(c *Client) {
+		if o == nil {
+			c.observer = NopObserver{}
+			return
+		}
+		c.observer = o
+	}
+}
+
 // NewClient 创建一个 OpenAI 兼容客户端。
 // baseURL 示例：https://api.openai.com/v1；model 示例：gpt-4o-mini。
 func NewClient(baseURL, apiKey, model string, opts ...Option) *Client {
@@ -56,6 +69,7 @@ func NewClient(baseURL, apiKey, model string, opts ...Option) *Client {
 		model:      model,
 		httpClient: &http.Client{Timeout: 120 * time.Second},
 		temp:       0.1,
+		observer:   NopObserver{},
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -103,16 +117,25 @@ func (c *Client) Complete(ctx context.Context, req agent.CompletionRequest) (age
 		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 
+	// 观测钩子：请求发出前记录完整 URL 与 payload，以便出错时回放。
+	c.observer.OnRequest(httpReq.URL.String(), httpReq.Header, body)
+	start := time.Now()
+
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		c.observer.OnError(err, time.Since(start))
 		return agent.CompletionResponse{}, fmt.Errorf("send request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		c.observer.OnError(err, time.Since(start))
 		return agent.CompletionResponse{}, fmt.Errorf("read response: %w", err)
 	}
+
+	// 观测钩子：无论状态码都记录响应体，非 2xx 也能看到上游返回的详细错误。
+	c.observer.OnResponse(resp.StatusCode, respBody, time.Since(start))
 
 	if resp.StatusCode >= 300 {
 		return agent.CompletionResponse{}, fmt.Errorf(
@@ -185,7 +208,8 @@ var _ agent.Model = (*Client)(nil)
 //   - system 必须作为 messages 数组的第一项；
 //   - assistant 若包含 tool_calls，需要同时携带 tool_calls 字段；
 //   - tool 消息需要 tool_call_id（与 assistant 的某次 tool_calls[i].id 关联）；
-//   - tool 消息的 name 字段在最新 OpenAI 协议中非必需，这里不填。
+//   - tool 消息的 name 字段在最新 OpenAI 协议中非必需，这里不填；
+//   - 空 content 的规范化（见下方 normalizeContent 注释）。
 func toOpenAIMessages(systemPrompt string, messages []agent.Message) []map[string]any {
 	result := make([]map[string]any, 0, len(messages)+1)
 	if systemPrompt != "" {
@@ -197,7 +221,7 @@ func toOpenAIMessages(systemPrompt string, messages []agent.Message) []map[strin
 	for _, m := range messages {
 		item := map[string]any{
 			"role":    m.Role,
-			"content": m.Content,
+			"content": normalizeContent(m),
 		}
 		if m.ToolCallID != "" {
 			item["tool_call_id"] = m.ToolCallID
@@ -208,6 +232,22 @@ func toOpenAIMessages(systemPrompt string, messages []agent.Message) []map[strin
 		result = append(result, item)
 	}
 	return result
+}
+
+// normalizeContent 规范化消息的 content 字段，避免被部分 OpenAI 兼容代理拒绝：
+//   - assistant 且只发起 tool_calls（content 为空）时，按官方协议给出 null，
+//     否则部分代理（尤其国内一些 one-api 风格网关）会以 500 Internal Server Error 报错。
+//   - tool 消息 content 不允许为空字符串（同样会触发上游 500），
+//     当工具无输出时填一个占位符，让模型知道命令执行成功但没有输出。
+//   - 其它情况原样返回。
+func normalizeContent(m agent.Message) any {
+	if m.Role == agent.RoleAssistant && m.Content == "" && len(m.ToolCalls) > 0 {
+		return nil // 将序列化为 JSON null
+	}
+	if m.Role == agent.RoleTool && m.Content == "" {
+		return "(工具无输出)"
+	}
+	return m.Content
 }
 
 // toOpenAIToolCalls 将内部 ToolCall 转换为 OpenAI 的 tool_calls 数组。

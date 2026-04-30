@@ -39,7 +39,8 @@ tinyCode/
 │   │   ├── event.go           # 结构化事件协议
 │   │   └── errors.go          # 可识别错误类型
 │   ├── model/openai/
-│   │   └── client.go          # OpenAI 兼容 HTTP 客户端
+│   │   ├── client.go          # OpenAI 兼容 HTTP 客户端
+│   │   └── observer.go        # 模型交互观测器（JSONL 落盘 + 脱敏）
 │   ├── tools/shell/
 │   │   ├── shell.go           # 跨平台 Shell 工具
 │   │   └── blacklist.go       # 危险命令黑名单
@@ -416,6 +417,43 @@ func WithTemperature(t float64) Option {
 
 这种一致性不是偶然的。当一个项目里到处都用 Option 模式时，新成员只需要理解一次"函数选项"的概念，就能读懂所有构造逻辑。
 
+#### 3.2.4 模型交互观测器
+
+与大模型 API 交互时最常见的故障（400 / 500 / 超时 / 格式不匹配）都发生在 HTTP 边界。为了让排查不再靠猜，`openai` 包提供了一个 **可插拔的观测器** （`observer.go`）：
+
+```go
+type Observer interface {
+    OnRequest(url string, headers http.Header, payload []byte)
+    OnResponse(status int, body []byte, duration time.Duration)
+    OnError(err error, duration time.Duration)
+}
+```
+
+- **默认 NopObserver**：内置空实现，不开启时 Client 零额外开销；
+- **默认提供 JSONLFileObserver**：将每次交互以一行 JSON 的形式追加到文件，一次运行一个 `openai-YYYYMMDD-HHMMSS.jsonl`；
+- **自动脱敏**：`Authorization` / `X-API-Key` 等请求头写入前替换为 `***redacted***`；
+- **降级写入**：写盘失败时打到 stderr，绝不阻塞主流程。
+
+在 Client.Complete 中有三个钩子点：
+
+```go
+c.observer.OnRequest(httpReq.URL.String(), httpReq.Header, body)
+start := time.Now()
+
+resp, err := c.httpClient.Do(httpReq)
+if err != nil {
+    c.observer.OnError(err, time.Since(start))
+    return ..., err
+}
+
+respBody, _ := io.ReadAll(resp.Body)
+c.observer.OnResponse(resp.StatusCode, respBody, time.Since(start))
+```
+
+注意响应钩子放在状态码判断 **之前**：非 2xx 时也能完整记录上游返回的错误体，这正是排查 400/500 问题时最需要的证据。
+
+开关通过 `RuntimeConfig.Trace` 控制，bootstrap 在为真时构造 `JSONLFileObserver` 并通过 `openai.WithObserver` 注入。UI 层只需负责退出前关闭文件句柄（见 4.3）。
+
 ---
 
 ### 3.3 工具系统（`internal/tools/shell/`）
@@ -639,8 +677,20 @@ func (c *RuntimeConfig) Finalize(fs *pflag.FlagSet) error {
 `bootstrap.Build` 是连接"配置"与"对象"的桥梁，也是整个项目唯一的"装配中心"：
 
 ```go
-func Build(cfg config.RuntimeConfig, opts Options) (*agent.Agent, error) {
-    client := openai.NewClient(cfg.BaseURL, cfg.APIKey, cfg.Model)
+func Build(cfg config.RuntimeConfig, opts Options) (*agent.Agent, Artifacts, error) {
+    var art Artifacts
+
+    clientOpts := []openai.Option{}
+    if cfg.Trace {
+        obs, err := openai.NewJSONLFileObserver(cfg.TraceDir)
+        if err != nil {
+            return nil, art, fmt.Errorf("初始化观测器失败: %w", err)
+        }
+        clientOpts = append(clientOpts, openai.WithObserver(obs))
+        art.TracePath = obs.Path()
+        art.TraceCloser = obs
+    }
+    client := openai.NewClient(cfg.BaseURL, cfg.APIKey, cfg.Model, clientOpts...)
 
     agentOpts := []agent.Option{
         agent.WithModel(client),
@@ -652,13 +702,26 @@ func Build(cfg config.RuntimeConfig, opts Options) (*agent.Agent, error) {
     }
     agentOpts = append(agentOpts, opts.ExtraAgentOptions...)
 
-    return agent.NewAgent(agentOpts...)
+    a, err := agent.NewAgent(agentOpts...)
+    if err != nil {
+        if art.TraceCloser != nil {
+            _ = art.TraceCloser.Close()
+        }
+        return nil, Artifacts{}, fmt.Errorf("装配 Agent 失败: %w", err)
+    }
+    return a, art, nil
+}
+
+// Artifacts 是 Build 过程中产生的副产品，UI 层按需展示与收尾。
+type Artifacts struct {
+    TracePath   string    // JSONL 日志绝对路径；未开启时为空
+    TraceCloser io.Closer // 文件句柄，需在退出前 Close
 }
 ```
 
 设计意图非常清晰：**UI 层（TUI / REPL）只关心"怎么交互"，不关心"怎么创建对象"；bootstrap 只关心"怎么创建对象"，不关心"谁来使用它"。**
 
-`Options.ExtraAgentOptions` 是一个巧妙的扩展点：TUI 注入 `EventSink`，REPL 注入 `Logger`，而 bootstrap 本身对这两者一无所知。这就是**依赖注入**的实践——高层模块定义行为，低层模块提供实现。
+`Options.ExtraAgentOptions` 是一个巧妙的扩展点：TUI 注入 `EventSink`，REPL 注入 `Logger`，而 bootstrap 本身对这两者一无所知。返回的 `Artifacts.TraceCloser` 则用来把观测文件的生命周期管理权交给 UI 层：REPL / TUI 在退出前 `defer art.TraceCloser.Close()` 即可。这就是**依赖注入**的实践——高层模块定义行为，低层模块提供实现。
 
 ### 4.4 Bubble Tea TUI
 

@@ -51,8 +51,10 @@ tinyCode/
 │   │   ├── options.go             Functional Options
 │   │   ├── agent.go               RunLoop 主循环
 │   │   └── errors.go              可识别错误
-│   ├── model/openai/client.go     OpenAI 兼容 API 客户端（实现 Model）
-│   └── tools/shell/               跨平台 Shell 工具（实现 Tool）
+│   ├── model/openai/                OpenAI 兼容 API 实现（实现 Model）
+│   │   ├── client.go                HTTP 客户端
+│   │   └── observer.go              模型交互观测器（可选，默认 Nop）
+│   └── tools/shell/                 跨平台 Shell 工具（实现 Tool）
 │       ├── shell.go
 │       └── blacklist.go
 └── docs/DESIGN.md                 本文件
@@ -148,6 +150,8 @@ type Model interface {
 1. 新建 `internal/model/<provider>/client.go`；
 2. 实现 `Name()` 与 `Complete()`；
 3. 在 `cmd/tinycode/main.go` 中替换 `openai.NewClient(...)` 为新 Client 即可。
+
+> 🔍 **可选观测能力**：OpenAI 实现提供了可插拔的 `Observer` 接口与 `JSONLFileObserver` 默认落盘实现（默认 `NopObserver` 零开销）。由 `bootstrap` 根据 `cfg.Trace` 开关注入 `openai.WithObserver(...)`，不侵入 `Model` 接口、不污染 Agent 主环。详见 [TECHNICAL.md § 3.2.4](./TECHNICAL.md)。
 
 ### 4.2 Tool
 
