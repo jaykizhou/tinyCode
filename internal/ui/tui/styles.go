@@ -31,7 +31,7 @@ var styles = struct {
 	welcomeGreeting lipgloss.Style // "Welcome back!" 大字
 	welcomeLogo     lipgloss.Style // 品牌图形
 	welcomeBrand    lipgloss.Style // tinyCode 品牌名
-	welcomeTag      lipgloss.Style // 副标题 "A tiny Coding Agent"
+	welcomeTag      lipgloss.Style // 副标题 "A Tiny Coding Agent"
 	welcomeLabel    lipgloss.Style // 栏目标题（"快速开始"/"提示"）
 	welcomeKey      lipgloss.Style // 按键名
 	welcomeDesc     lipgloss.Style // 描述文字

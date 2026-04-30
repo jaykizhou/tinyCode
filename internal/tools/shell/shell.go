@@ -141,7 +141,17 @@ func pickShell(command string) (string, []string) {
 	if runtime.GOOS == "windows" {
 		// -NoProfile：跳过 $PROFILE 启动脚本，加快启动并避免环境污染；
 		// -Command：作为单次执行，不进入交互模式。
-		return "powershell", []string{"-NoProfile", "-Command", command}
+		//
+		// 编码处理：中文 Windows 的 PowerShell 默认以 CP936(GBK) 输出到管道，
+		// Go 侧以 UTF-8 解读会得到乱码。这里在用户命令前插入三条“前置语句”：
+		//   1) chcp 65001 切换控制台代码页，影响子进程（git/ls 等）；
+		//   2) [Console]::OutputEncoding 控制 PowerShell 写回标准输出时的编码；
+		//   3) $OutputEncoding 控制通过管道传给其他程序时的编码。
+		// 三者合起来保证 CombinedOutput 读到的始终是 UTF-8。
+		const utf8Prelude = "chcp 65001 > $null; " +
+			"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); " +
+			"$OutputEncoding = [System.Text.UTF8Encoding]::new(); "
+		return "powershell", []string{"-NoProfile", "-Command", utf8Prelude + command}
 	}
 	return "bash", []string{"-c", command}
 }

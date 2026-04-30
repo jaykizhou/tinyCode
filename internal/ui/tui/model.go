@@ -50,7 +50,10 @@ type Model struct {
 // newModel 在 program.go 中被调用，封装初始默认值，便于单元测试替换。
 func newModel(ctx context.Context, a *agent.Agent, cfg config.RuntimeConfig, sink *channelSink) Model {
 	ta := textarea.New()
-	ta.Placeholder = "输入消息，Enter 发送，Shift+Enter 换行，Ctrl+D 退出..."
+	// Placeholder 仅用一句极短文本，避免在窄终端下被 textarea 内部的
+	// word-wrap + hard-wrap 折行，造成多行一模一样的“伪重复提示”观感。
+	// 完整的快捷键提示放在 viewport 下方的 hint 行（见 renderHint）。
+	ta.Placeholder = "输入消息…"
 	ta.Prompt = "┃ "
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
@@ -121,7 +124,7 @@ func welcomeText(cfg config.RuntimeConfig, tracePath string, width int) string {
 	}
 
 	title := styles.welcomeTitle.Render("tinyCode") +
-		styles.welcomeDim.Render(" · A tiny Coding Agent")
+		styles.welcomeDim.Render(" · A Tiny Coding Agent")
 	return framePanel(title, leftLines, rightLines, leftInnerW, rightInnerW) + "\n"
 }
 
@@ -129,7 +132,7 @@ func welcomeText(cfg config.RuntimeConfig, tracePath string, width int) string {
 func legacyWelcomeText(cfg config.RuntimeConfig, tracePath string) string {
 	var sb strings.Builder
 	sb.WriteString(styles.welcomeGreeting.Render("Welcome back!") + "\n")
-	sb.WriteString(styles.welcomeDim.Render("tinyCode · A tiny Coding Agent") + "\n")
+	sb.WriteString(styles.welcomeDim.Render("tinyCode · A Tiny Coding Agent") + "\n")
 	sb.WriteString(styles.welcomeField.Render("模型  ") + styles.welcomeValue.Render(cfg.Model) + "\n")
 	sb.WriteString(styles.welcomeField.Render("目录  ") + styles.welcomeValue.Render(shortPath(cfg.WorkDir)) + "\n")
 	if tracePath != "" {
