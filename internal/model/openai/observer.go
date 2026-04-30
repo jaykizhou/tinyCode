@@ -1,4 +1,4 @@
-// Package openai 的 observer.go 提供一个可插拔的 "模型交互观测器"。
+// Package openai 的 observer.go 提供一个可插拔的「模型交互观测器」。
 //
 // 设计动机：
 //   - 与大模型交互时最常见的故障（400/500/超时/格式不匹配）都发生在 HTTP 边界，
@@ -9,8 +9,9 @@
 // 设计要点：
 //   - Observer 是一个接口，默认 NopObserver 不做任何事，核心代码零感知。
 //   - JSONLFileObserver 追加写文件，单次交互一条记录，不做缓冲以防进程崩溃丢数据。
-//   - 自动脱敏 Authorization 头，避免日志泄漏 API Key。
-//   - 写盘失败降级为 stderr 打印，绝不影响主流程。
+//   - 自动脱敏 Authorization 头，避免日志泄露 API Key。
+//   - 写盘失败降级到 stderr 打印，绝不影响主流程。
+//   - 【懒创建】文件在第一次实际写入时才创建，避免启动后无交互留下大量空文件。
 package openai
 
 import (
@@ -26,7 +27,7 @@ import (
 
 // Observer 观测一次 Chat Completions 调用的三个关键时刻。
 //
-// 实现方需自行处理并发（Client 虽然不在同一次请求内并发调用这三个方法，
+// 实现方需自处理并发（Client 虽然不在同一次请求内并发调用这三个方法，
 // 但多个 goroutine 可能共享同一个 Observer）。
 type Observer interface {
 	// OnRequest 在 HTTP 请求发出前调用。
@@ -60,39 +61,44 @@ var _ Observer = NopObserver{}
 // JSONLFileObserver 将每次交互以一行 JSON 的形式追加到文件。
 //
 // 文件格式：每行一条记录，字段包括 ts / kind / (url|status|error) / ...。
-// 使用 JSONL（而非单个大 JSON 对象）是为了支持 "边跑边追加" 以及
+// 使用 JSONL（而非单个大 JSON 对象）是为了支持「边跑边追加」以及
 // 事后用 jq 快速切片分析。
+//
+// 【懒创建】：文件在第一次实际写入时才创建，若整个会话没有任何 API 调用，
+// 则不会在磁盘上留下空文件。
 type JSONLFileObserver struct {
-	mu   sync.Mutex // 保护 f 的串行写入
+	mu   sync.Mutex // 保护 f 的串行写入及懒初始化
 	f    *os.File
-	path string
+	dir  string // 目标目录，懒创建时使用
+	name string // 文件名，懒创建时使用
+	path string // 完整路径，首次创建后固定
 }
 
 // NewJSONLFileObserver 创建一个文件观测器。
 //
-// dir 不存在会自动创建（0o755）。
+// dir 不存在会在首次写入时自动创建（o755）。
 // 文件名固定为 openai-YYYYMMDD-HHMMSS.jsonl，保证单次进程一个独立文件，
 // 便于对照一次运行排查问题。
+//
+// 注意：此函数不再立即创建文件，文件将在第一次写入时才真正落盘。
 func NewJSONLFileObserver(dir string) (*JSONLFileObserver, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, fmt.Errorf("trace dir 不能为空")
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("创建 trace 目录失败: %w", err)
-	}
 	name := fmt.Sprintf("openai-%s.jsonl", time.Now().Format("20060102-150405"))
-	path := filepath.Join(dir, name)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return nil, fmt.Errorf("打开 trace 文件失败: %w", err)
-	}
-	return &JSONLFileObserver{f: f, path: path}, nil
+	return &JSONLFileObserver{
+		dir:  dir,
+		name: name,
+		path: filepath.Join(dir, name),
+	}, nil
 }
 
-// Path 返回当前写入的文件绝对路径，便于在 UI 中展示 "trace → xxx.jsonl"。
+// Path 返回当前写入的文件绝对路径，便于在 UI 中展示「trace -> xxx.jsonl」。
+// 注意：文件可能尚未创建（无交互时），调用方仅用于展示即可。
 func (o *JSONLFileObserver) Path() string { return o.path }
 
 // Close 关闭底层文件；Observer 生命周期与 Client 绑定时应在进程退出前调用。
+// 若文件从未被创建（无任何写入），Close 是无操作的。
 func (o *JSONLFileObserver) Close() error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -143,13 +149,35 @@ func (o *JSONLFileObserver) OnError(err error, duration time.Duration) {
 	})
 }
 
+// ensureOpen 在持有锁的前提下，确保文件已打开；首次调用时懒创建文件。
+// 调用方必须已持有 o.mu。
+func (o *JSONLFileObserver) ensureOpen() error {
+	if o.f != nil {
+		return nil // 已打开，直接复用
+	}
+	// 目录不存在则创建
+	if err := os.MkdirAll(o.dir, 0o755); err != nil {
+		return fmt.Errorf("创建 trace 目录失败: %w", err)
+	}
+	f, err := os.OpenFile(o.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("打开 trace 文件失败: %w", err)
+	}
+	o.f = f
+	return nil
+}
+
 // write 串行写入一行 JSON。写失败时降级到 stderr，不阻塞业务。
 func (o *JSONLFileObserver) write(record map[string]any) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.f == nil {
+
+	// 懒创建：首次写入时才真正打开/创建文件
+	if err := o.ensureOpen(); err != nil {
+		fmt.Fprintf(os.Stderr, "[trace] 打开文件失败: %v\n", err)
 		return
 	}
+
 	data, err := json.Marshal(record)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[trace] marshal 失败: %v\n", err)
@@ -166,7 +194,7 @@ var _ Observer = (*JSONLFileObserver)(nil)
 
 // ------------------------------ 辅助函数 ------------------------------
 
-// redactHeaders 把敏感头脱敏成 "***"，避免泄漏 API Key。
+// redactHeaders 把敏感头脱敏为 "***redacted***"，避免泄露 API Key。
 // 返回 map[string][]string 方便 json.Marshal 输出数组形式。
 func redactHeaders(h http.Header) map[string][]string {
 	out := make(map[string][]string, len(h))
@@ -183,7 +211,7 @@ func redactHeaders(h http.Header) map[string][]string {
 	return out
 }
 
-// isJSON 粗略判断字节是否是 JSON 对象或数组，避免对非 JSON 响应误调 RawMessage。
+// isJSON 粗略判断字节是否是 JSON 对象或数组，避免对非 JSON 响应调 RawMessage。
 func isJSON(b []byte) bool {
 	s := strings.TrimSpace(string(b))
 	if s == "" {
