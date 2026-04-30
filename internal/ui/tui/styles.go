@@ -25,6 +25,15 @@ var styles = struct {
 	hintText       lipgloss.Style
 	separator      lipgloss.Style
 
+	// 输入区
+	inputHeaderBar  lipgloss.Style // 输入区顶部分隔带的底色
+	inputLabelIdle  lipgloss.Style // 就绪态“你的输入”徐章
+	inputLabelBusy  lipgloss.Style // 繁忙态“正在处理”徐章
+	inputRuleIdle   lipgloss.Style // 就绪态分隔线颜色
+	inputRuleBusy   lipgloss.Style // 繁忙态分隔线颜色（高亮）
+	inputPromptIdle lipgloss.Style // 就绪态 textarea 行首 prompt 颜色
+	inputPromptBusy lipgloss.Style // 繁忙态 textarea 行首 prompt 颜色
+
 	// 欢迎面板
 	welcomeBorder   lipgloss.Style // 圆角边框颜色
 	welcomeTitle    lipgloss.Style // 嵌入顶边的标题
@@ -88,6 +97,30 @@ var styles = struct {
 		Italic(true),
 	separator: lipgloss.NewStyle().
 		Foreground(lipgloss.Color("238")),
+
+	// 输入区视觉体系：就绪 = 冷色（蓝）；繁忙 = 暖色（橙）。
+	// 标签用 Background 填色形成明显的胶囊，一眼即可识别出这里是操作区。
+	inputHeaderBar: lipgloss.NewStyle(),
+	inputLabelIdle: lipgloss.NewStyle().
+		Background(lipgloss.Color("24")). // DeepSkyBlue4
+		Foreground(lipgloss.Color("230")).
+		Bold(true).
+		Padding(0, 1),
+	inputLabelBusy: lipgloss.NewStyle().
+		Background(lipgloss.Color("208")). // DarkOrange
+		Foreground(lipgloss.Color("232")).
+		Bold(true).
+		Padding(0, 1),
+	inputRuleIdle: lipgloss.NewStyle().
+		Foreground(lipgloss.Color("24")),
+	inputRuleBusy: lipgloss.NewStyle().
+		Foreground(lipgloss.Color("208")),
+	inputPromptIdle: lipgloss.NewStyle().
+		Foreground(lipgloss.Color("39")). // DodgerBlue
+		Bold(true),
+	inputPromptBusy: lipgloss.NewStyle().
+		Foreground(lipgloss.Color("208")). // DarkOrange
+		Bold(true),
 
 	welcomeBorder: lipgloss.NewStyle().
 		Foreground(lipgloss.Color("67")), // 钢蓝 SteelBlue3，柔和不刺眼

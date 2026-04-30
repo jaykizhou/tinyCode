@@ -64,10 +64,11 @@ func (m Model) onResize(msg tea.WindowSizeMsg) Model {
 	m.height = msg.Height
 
 	statusHeight := 1
-	hintHeight := 1
+	inputHeaderHeight := 1
 	inputHeight := 3
-	// 2 行间距（状态栏下方 + hint 上方各 1 行由 JoinVertical 自然分隔）
-	vpHeight := msg.Height - statusHeight - hintHeight - inputHeight - 2
+	hintHeight := 1
+	// 1 行安全间距（防止终端满屏后 textarea 在最后一行被部分遮挡）。
+	vpHeight := msg.Height - statusHeight - inputHeaderHeight - inputHeight - hintHeight - 1
 	if vpHeight < 3 {
 		vpHeight = 3
 	}
@@ -242,6 +243,7 @@ func (m Model) onAgentDone(msg agentDoneMsg) Model {
 		m.runCancel()
 		m.runCancel = nil
 	}
+	m.applyInputMode(false)
 
 	if msg.err != nil {
 		// 取消导致的错误仅提示，不再额外追加（onKey 已追加过"已请求取消"）。

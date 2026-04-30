@@ -50,11 +50,8 @@ type Model struct {
 // newModel 在 program.go 中被调用，封装初始默认值，便于单元测试替换。
 func newModel(ctx context.Context, a *agent.Agent, cfg config.RuntimeConfig, sink *channelSink) Model {
 	ta := textarea.New()
-	// Placeholder 仅用一句极短文本，避免在窄终端下被 textarea 内部的
-	// word-wrap + hard-wrap 折行，造成多行一模一样的“伪重复提示”观感。
-	// 完整的快捷键提示放在 viewport 下方的 hint 行（见 renderHint）。
-	ta.Placeholder = "输入消息…"
-	ta.Prompt = "┃ "
+	// Placeholder 和 Prompt 来自 applyInputMode 动态设置（按 busy 切换），
+	// 在构造末尾一次性初始化为 idle 态。
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
 	ta.SetHeight(3)
@@ -67,7 +64,7 @@ func newModel(ctx context.Context, a *agent.Agent, cfg config.RuntimeConfig, sin
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
-	return Model{
+	m := Model{
 		agent:    a,
 		cfg:      cfg,
 		ctx:      ctx,
@@ -77,6 +74,22 @@ func newModel(ctx context.Context, a *agent.Agent, cfg config.RuntimeConfig, sin
 		spinner:  sp,
 		keys:     defaultKeyMap(),
 	}
+	m.applyInputMode(false)
+	return m
+}
+
+// applyInputMode 根据 busy 状态同步 textarea 的 Prompt 与 Placeholder。
+//
+// 之所以把这份开关逻辑抽成方法，是为了保证在 newModel / submitInput /
+// onAgentDone 三个关键节点上使用同一套外观规则，避免状态飘移。
+func (m *Model) applyInputMode(busy bool) {
+	if busy {
+		m.input.Prompt = styles.inputPromptBusy.Render("‼") + " "
+		m.input.Placeholder = "Agent 正在处理中，请稍候…"
+		return
+	}
+	m.input.Prompt = styles.inputPromptIdle.Render("❯") + " "
+	m.input.Placeholder = "输入消息…"
 }
 
 // Init 实现 tea.Model：启动监听事件通道 + 启动 spinner tick。

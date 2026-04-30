@@ -7,24 +7,25 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// View 实现 tea.Model：三段式布局 = 状态栏 + viewport + 提示行 + 输入框。
+// View 实现 tea.Model：五段式布局 = 状态栏 + viewport + 输入头 + 输入框 + 底部快捷键。
 //
 // 设计说明：
 //   - 所有具体样式集中在 styles 变量中，这里只做拼装。
-//   - 因为子组件已经自行渲染，所以 View 只负责把它们串起来并叠加状态栏。
+//   - 输入头负责把“展示区”与“操作区”切开，避免用户混淆输入框和普通文本。
 func (m Model) View() string {
 	status := m.renderStatusBar()
 	body := m.viewport.View()
+	header := m.renderInputHeader()
 	input := m.input.View()
-
 	hint := styles.hintText.Render(m.renderHint())
 
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		status,
 		body,
-		hint,
+		header,
 		input,
+		hint,
 	)
 }
 
@@ -68,9 +69,45 @@ func (m Model) renderStatusBar() string {
 // renderHint 在 viewport 与输入框之间给出一行操作提示。
 func (m Model) renderHint() string {
 	if m.busy {
-		return "Ctrl+C 取消当前对话"
+		return "Ctrl+C 取消当前对话  ·  Ctrl+L 清屏  ·  Ctrl+Y 复制  ·  Ctrl+D 退出"
 	}
-	return "Enter 发送 · Shift+Enter 换行 · Ctrl+L 清屏 · Ctrl+D 退出 · Ctrl+Y 复制"
+	return "Enter 发送  ·  Shift+Enter 换行  ·  Ctrl+L 清屏  ·  Ctrl+Y 复制  ·  Ctrl+D 退出"
+}
+
+// renderInputHeader 渲染输入区顶部的分隔带。
+//
+// 它同时承担两个职责：
+//  1. 视觉切割“展示区”与“操作区”，以胶囊形标签明指这里是输入区；
+//  2. 在 busy 状态下切换为橙色主题并嵌入 spinner 与操作提示，
+//     让用户一眼到底感知到 Agent 在处理中、不要等空或重复发送。
+func (m Model) renderInputHeader() string {
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+
+	var (
+		label  string
+		right  string
+		ruleFg lipgloss.Style
+	)
+	if m.busy {
+		label = styles.inputLabelBusy.Render("▸ 正在处理")
+		right = styles.statusBusy.Render(m.spinner.View() + " Agent 思考中… Ctrl+C 取消")
+		ruleFg = styles.inputRuleBusy
+	} else {
+		label = styles.inputLabelIdle.Render("▸ 你的输入")
+		right = styles.hintText.Render("Enter 发送")
+		ruleFg = styles.inputRuleIdle
+	}
+
+	leftRule := ruleFg.Render("━━")
+	pad := width - lipgloss.Width(leftRule) - lipgloss.Width(label) - lipgloss.Width(right) - 3
+	if pad < 2 {
+		pad = 2
+	}
+	midRule := ruleFg.Render(strings.Repeat("━", pad))
+	return leftRule + " " + label + " " + midRule + " " + right
 }
 
 // renderHistory 把 history 中的气泡一一渲染成带样式的字符串。

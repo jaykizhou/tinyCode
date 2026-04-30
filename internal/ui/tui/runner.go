@@ -44,6 +44,7 @@ func (m *Model) submitInput() tea.Cmd {
 		content: text,
 	})
 	m.input.Reset()
+	m.applyInputMode(true)
 	return tea.Batch(m.runAgentCmd(text), m.spinner.Tick)
 }
 
