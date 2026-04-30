@@ -2,6 +2,7 @@
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -195,9 +196,6 @@ func renderBubble(b bubble, width int) string {
 	case bubbleError:
 		return styles.errorLabel.Render(marker+" ✖ "+b.header) + "\n" +
 			styles.errorText.PaddingLeft(2).Render(content)
-
-	case bubbleInfo:
-		return styles.hintText.Render("ℹ " + b.content)
 	}
 	return b.content
 }
@@ -255,12 +253,13 @@ func shortPath(p string) string {
 	if len(p) <= limit {
 		return p
 	}
-	parts := strings.Split(p, "/")
+	sep := string(filepath.Separator)
+	parts := strings.Split(filepath.Clean(p), sep)
 	if len(parts) < 3 {
 		return "..." + p[len(p)-limit+3:]
 	}
 	tail := parts[len(parts)-2:]
-	return ".../" + strings.Join(tail, "/")
+	return "..." + sep + strings.Join(tail, sep)
 }
 
 // indent 给多行文本整体缩进 n 个空格。

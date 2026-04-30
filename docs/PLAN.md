@@ -1,5 +1,7 @@
 # TinyCode 最小 Agent 实现计划
 
+> **说明：本计划所列内容已全部完成实施。** 此外，项目在实际演进中超出原始计划，额外实现了 TUI 交互界面、模型交互观测系统、Cobra CLI 框架、YAML 配置文件系统以及 Bootstrap 对象装配工厂。详见下方「当前项目状态总结」。
+
 ## 1. 设计目标与核心哲学
 
 - 忠实实现 `one_loop.md` 的 "Model + Harness" 思想：Harness 尽量薄、只做忠实转发，不写编排逻辑
@@ -198,4 +200,31 @@ func (s *ShellTool) Execute(ctx context.Context, raw json.RawMessage) (string, e
 - 不实现流式响应（保持最小）
 - 不实现会话持久化/压缩（保持最小）
 - 不引入中间件链 / 图执行器（blades-main 的 graph/flow 超出本次范围）
-- 不编写单元测试（保持最小；接口设计上允许后续补充 mock）
+- ~~不编写单元测试（保持最小；接口设计上允许后续补充 mock）~~ → **已补充**：核心包（agent、tools/shell、model/openai、cli/config）均已编写单元测试。
+
+---
+
+## 10. 超出原始计划的额外实现
+
+| 功能 | 原始计划 | 实际实现 |
+|------|---------|---------|
+| UI 模式 | 仅 REPL（`bufio.Scanner`） | **TUI + REPL 双模式**：基于 Bubble Tea 的全屏 TUI，支持实时事件气泡、鼠标滚轮、气泡折叠/展开 |
+| 观测能力 | 无 | **内置 JSONL 观测器**：`openai.Observer` 接口 + `JSONLFileObserver` 落盘实现，支持懒创建、脱敏、降级 stderr |
+| CLI 框架 | 纯 `main.go` + `bufio.Scanner` | **Cobra 命令树**：root（默认 TUI）/ repl / version 三节点，PersistentFlags 共享配置 |
+| 配置系统 | 仅环境变量 | **四层优先级合并**：CLI Flag > 环境变量 > `config.yaml` > 默认值；自研最小 YAML 解析器（无第三方依赖） |
+| 对象装配 | `main.go` 直接构造 | **Bootstrap 装配工厂**：`bootstrap.Build` 集中装配 Agent、Model、Tool、Observer，UI 层零感知 |
+| 安全增强 | 仅黑名单 | **黑名单 + 超时 + 输出截断 + Windows UTF-8 编码处理** |
+
+## 11. 当前项目状态总结
+
+截至本文档更新时，tinyCode 已实现以下能力：
+
+- **Agent 核心**：one-loop `RunLoop`、只追加 `Conversation`、`Registry` 工具注册表、结构化 `EventSink` 事件协议
+- **模型接入**：OpenAI 兼容 HTTP 客户端，支持 Chat Completions + Tools 调用
+- **工具系统**：跨平台 Shell 工具（Windows→PowerShell / 其它→bash），含命令黑名单、超时控制、输出截断
+- **UI 层**：Bubble Tea TUI（7 文件 MVU 拆分）+ 纯文本 REPL，两者共用同一套 bootstrap 装配逻辑
+- **CLI 层**：Cobra 命令树、四层配置合并、版本命令
+- **观测能力**：可插拔 `Observer` 接口，内置 JSONL 文件观测器，自动脱敏敏感头，写盘失败降级 stderr
+- **测试覆盖**：agent、tools/shell、model/openai、cli/config 等核心包均配有单元测试
+
+项目代码总量约 1500 行（不含测试），保持"最小可用"的哲学同时，通过接口抽象预留了充分的扩展空间。

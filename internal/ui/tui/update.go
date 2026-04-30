@@ -1,7 +1,9 @@
 ﻿package tui
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -257,15 +259,12 @@ func (m Model) onAgentDone(msg agentDoneMsg) Model {
 	}
 	m.applyInputMode(false)
 
-	if msg.err != nil {
-		// 取消导致的错误仅提示，不再额外追加（onKey 已追加过"已请求取消"）。
-		if !strings.Contains(msg.err.Error(), "context canceled") {
-			m.appendBubble(bubble{
-				kind:    bubbleError,
-				header:  "错误",
-				content: msg.err.Error(),
-			})
-		}
+	if msg.err != nil && !errors.Is(msg.err, context.Canceled) {
+		m.appendBubble(bubble{
+			kind:    bubbleError,
+			header:  "错误",
+			content: msg.err.Error(),
+		})
 	}
 	// 一轮对话结束：将本轮产生的气泡批量折叠，只保留前两行预览，
 	// 减少历史轮次对视线的干扰。user 气泡通常也很短，isCollapsible 会自动将其忽略。

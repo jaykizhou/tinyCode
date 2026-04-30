@@ -101,11 +101,6 @@ func (c *RuntimeConfig) Finalize(fs *pflag.FlagSet) error {
 		c.TraceDir = DefaultTraceDir
 	}
 
-	// if strings.TrimSpace(c.APIKey) == "" {
-	// 	return fmt.Errorf(
-	// 		"缺少 API Key，请通过 --api-key、环境变量 %s 或配置文件 %s 提供",
-	// 		EnvAPIKey, c.effectiveConfigPath())
-	// }
 	if c.WorkDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -169,12 +164,4 @@ func parseBoolEnv(v string) *bool {
 	}
 	t := true
 	return &t
-}
-
-// effectiveConfigPath 返回给错误信息展示用的配置文件路径。
-func (c *RuntimeConfig) effectiveConfigPath() string {
-	if strings.TrimSpace(c.ConfigPath) == "" {
-		return DefaultConfigPath
-	}
-	return c.ConfigPath
 }

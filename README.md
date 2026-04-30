@@ -120,10 +120,20 @@ tinyCode 支持 **三种配置来源**，按优先级从高到低依次叠加，
 
 **方式一：环境变量（推荐）**
 
+Bash / Zsh：
+
 ```bash
 export OPENAI_API_KEY="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
 export OPENAI_BASE_URL="https://api.openai.com/v1"
 export OPENAI_MODEL="gpt-4o-mini"
+```
+
+Windows PowerShell：
+
+```powershell
+$env:OPENAI_API_KEY = "sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+$env:OPENAI_BASE_URL = "https://api.openai.com/v1"
+$env:OPENAI_MODEL = "gpt-4o-mini"
 ```
 
 **方式二：`config.yaml` 文件**
@@ -168,6 +178,18 @@ tinycode repl
 tinycode version
 ```
 
+**`tinycode version` 输出示例：**
+
+```
+tinycode dev
+commit:    none
+built:     unknown
+go:        go1.25.0
+platform:  windows/amd64
+```
+
+> 正式构建时可通过 `-ldflags` 注入版本信息，如 `go build -ldflags "-X tinycode/internal/cli.Version=1.0.0" ./cmd/tinycode`。
+
 ### 命令行参数说明
 
 所有参数在 root 命令上通过 **PersistentFlags** 定义一次，子命令自动继承。
@@ -208,6 +230,19 @@ tinycode --system "你是一个专注 Go 语言的专家"
   - 如果 Agent 正在思考 / 调用工具 → **取消当前对话**，程序保持运行
   - 如果处于空闲状态 → **退出程序**
 - TUI 会实时显示对话气泡，包括模型的回复和工具调用的中间过程
+
+**完整快捷键参考表：**
+
+| 快捷键 | 功能 | 适用状态 |
+|--------|------|---------|
+| Enter | 发送消息 | 空闲 |
+| Shift+Enter | 换行输入 | 任何 |
+| Ctrl+C | 取消当前对话 / 退出 | 二段式 |
+| Ctrl+D | 立即退出 | 任何 |
+| Ctrl+L | 清屏历史 | 空闲 |
+| Ctrl+Y | 复制对话到剪贴板 | 任何 |
+| 鼠标滚轮 | 滚动消息区 | 任何 |
+| 左键点击气泡 | 切换折叠/展开 | 任何 |
 
 ### REPL 模式操作说明
 
@@ -266,6 +301,20 @@ export TINYCODE_TRACE_DIR=./debug-logs   # 可选
 | `error` | 传输层错误 | `error` / `duration_ms` |
 
 > `Authorization` 等包含凭证的请求头会自动替换为 `***redacted***`，避免 API Key 泄露。
+
+**JSONL 记录格式示例：**
+
+```json
+{"ts":"2026-04-30T15:02:30.123456789+08:00","kind":"request","url":"https://api.openai.com/v1/chat/completions","headers":{"Authorization":["***redacted***"],"Content-Type":["application/json"]},"payload":{"model":"gpt-4o-mini","messages":[...]}}
+```
+
+```json
+{"ts":"2026-04-30T15:02:31.456789012+08:00","kind":"response","status":200,"duration_ms":1333,"body":{"id":"chatcmpl-xxx","choices":[{"message":{"content":"..."}}]}}
+```
+
+```json
+{"ts":"2026-04-30T15:02:35.678901234+08:00","kind":"error","error":"Post \"https://api.openai.com/v1/chat/completions\": context deadline exceeded","duration_ms":30001}
+```
 
 典型排查命令（PowerShell）：
 
@@ -383,6 +432,14 @@ agent, err := agent.NewAgent(
 #### 事件驱动架构
 
 Agent 内部的状态变化通过 **EventSink** 接口发出结构化事件，UI 层自主决定如何消费。同一份事件，TUI 可以渲染成气泡，REPL 可以打印成日志——两者完全解耦。
+
+#### 只追加不修改的会话设计
+
+`Conversation` 类型严格保证 messages 数组**只追加、永远不修改已有元素**。这带来三重好处：
+
+1. **模型上下文一致**：每次调用看到的历史完全一致；
+2. **天然可审计**：messages 本身就是完整的执行日志；
+3. **简化并发**：读取通过 `Snapshot` 返回副本，天然线程安全。
 
 #### 依赖注入
 

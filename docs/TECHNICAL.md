@@ -431,8 +431,9 @@ type Observer interface {
 
 - **默认 NopObserver**：内置空实现，不开启时 Client 零额外开销；
 - **默认提供 JSONLFileObserver**：将每次交互以一行 JSON 的形式追加到文件，一次运行一个 `openai-YYYYMMDD-HHMMSS.jsonl`；
-- **自动脱敏**：`Authorization` / `X-API-Key` 等请求头写入前替换为 `***redacted***`；
-- **降级写入**：写盘失败时打到 stderr，绝不阻塞主流程。
+- **懒创建机制**：`NewJSONLFileObserver` 不再立即创建文件，而是在第一次实际写入时才打开/创建，避免启动后无交互留下空文件；
+- **自动脱敏**：`Authorization`、`X-API-Key`、`API-Key` 三种请求头写入前替换为 `***redacted***`，大小写不敏感；
+- **降级写入**：写盘失败时打到 stderr（`[trace] 打开文件失败: ...`），绝不阻塞主流程，Agent 主循环继续运行。
 
 在 Client.Complete 中有三个钩子点：
 
@@ -608,21 +609,33 @@ func BindFlags(fs *pflag.FlagSet, cfg *RuntimeConfig) {
 - 前两者都没有，`config.yaml` 中 `model: foo-bar` → 用文件值；
 - 以上都无 → 用 `DefaultModel = "gpt-4o-mini"`。
 
-合并粘合剂是一个小巧的 `applyStringOverride`：
+合并粘合剂是两个小巧的辅助函数：
 
 ```go
-// 1. flag 被用户显式改过 → 保留 target；
-// 2. env 非空 → env 覆盖；
-// 3. 文件值非空 → 文件覆盖；
-// 4. 否则保留 BindFlags 写入的默认值。
-func applyStringOverride(fs *pflag.FlagSet, name string, target *string, envVal, fileVal string) {
-    if fs != nil && fs.Changed(name) { return }
-    if envVal != ""  { *target = envVal; return }
+// applyStringOverride：
+// 1. flag 被用户显式改过 → 保留 target（flag 最高优先级）；
+// 2. env 非空 → env 覆盖 target；
+// 3. 文件值非空 → 文件值覆盖 target；
+// 4. 否则保留 target 当前值（来自 BindFlags 的默认值或结构体零值）。
+func applyStringOverride(fs *pflag.FlagSet, flagName string, target *string, envVal, fileVal string) {
+    if fs != nil && fs.Changed(flagName) { return }
+    if envVal != "" { *target = envVal; return }
     if fileVal != "" { *target = fileVal; return }
+}
+
+// applyBoolOverride 与 applyStringOverride 同思路，用于 bool 开关。
+// env 采用指针语义：nil 表示未设置，非 nil 表示已显式指定值。
+// 文件值采用 bool 语义：true 时覆盖，false 时不覆盖（因为 bool 的零值就是 false）。
+func applyBoolOverride(fs *pflag.FlagSet, flagName string, target *bool, envVal *bool, fileVal bool) {
+    if fs != nil && fs.Changed(flagName) { return }
+    if envVal != nil { *target = *envVal; return }
+    if fileVal { *target = true }
 }
 ```
 
-> 目前只有 `api_key` / `base_url` / `model` 三项进入配置文件；`work_dir`、`max_iter` 等仍只接受 flag 或环境变量。
+`applyBoolOverride` 对 `trace` 开关尤为重要：环境变量 `TINYCODE_TRACE` 支持 `1`/`true`/`on`/`yes` 开启，`0`/`false`/`off`/`no` 显式关闭，空字符串则交由下一层决定。这种"三态"语义避免了"环境变量为空字符串却被当成 false"的歧义。
+
+> `api_key` / `base_url` / `model` / `trace` / `trace_dir` 五项同时支持配置文件；`work_dir`、`max_iter` 等其他字段仍只接受 flag 或环境变量。
 
 #### 4.2.2 RuntimeConfig 与 Finalize 合并流程
 
@@ -811,7 +824,22 @@ func (m Model) onAgentEvent(e agent.Event) (tea.Model, tea.Cmd) {
 }
 ```
 
-#### 4.4.4 用户交互：Ctrl+C 二段式退出
+#### 4.4.4 用户交互：快捷键与二段式退出
+
+TUI 的完整快捷键表如下：
+
+| 快捷键 | 功能 | 适用状态 |
+|--------|------|---------|
+| Enter | 发送消息 | 空闲 |
+| Shift+Enter | 换行输入 | 任何 |
+| Ctrl+C | 取消当前对话 / 退出 | 二段式 |
+| Ctrl+D | 立即退出 | 任何 |
+| Ctrl+L | 清屏历史 | 空闲 |
+| Ctrl+Y | 复制对话到剪贴板 | 任何 |
+| 鼠标滚轮 | 滚动消息区 | 任何 |
+| 左键点击气泡 | 切换折叠/展开 | 任何 |
+
+**二段式退出**的实现：
 
 ```go
 func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -827,8 +855,6 @@ func (m Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
     }
 }
 ```
-
-二段式退出是一个精妙的细节：
 
 - **Agent 正在思考时按 Ctrl+C** → 取消当前对话（`runCancel()`），程序保持运行，用户可以输入新消息；
 - **空闲时按 Ctrl+C** → 直接退出程序。

@@ -21,7 +21,7 @@ import (
 // 常量：超时、输出截断、默认参数 Schema。
 const (
 	defaultTimeout = 30 * time.Second // 默认命令超时
-	maxOutputBytes = 50000            // 单次输出上限，超过则头尾截断，防止 token 爆炸
+	maxOutputRunes = 16000            // 单次输出上限（rune 数），超过则头尾截断，防止 token 爆炸
 )
 
 // parametersSchema 是工具参数 JSON Schema。
@@ -115,12 +115,13 @@ func (t *Tool) Execute(ctx context.Context, raw json.RawMessage) (string, error)
 	output, runErr := cmd.CombinedOutput()
 	result := string(output)
 
-	// 5) 超长输出头尾截断，中间省略
-	if len(result) > maxOutputBytes {
-		half := maxOutputBytes / 2
-		result = result[:half] +
-			"\n\n... [输出已截断，中间省略] ...\n\n" +
-			result[len(result)-half:]
+	// 5) 超长输出头尾截断，中间省略（按 rune 截断避免损坏多字节 UTF-8 字符）
+	runes := []rune(result)
+	if len(runes) > maxOutputRunes {
+		half := maxOutputRunes / 2
+		result = string(runes[:half]) +
+			"\n\n... [输出已截断] ...\n\n" +
+			string(runes[len(runes)-half:])
 	}
 
 	// 如果是因为超时被终止，给模型一个明确提示
